@@ -1,0 +1,113 @@
+@import '@/assets/styles/variables.less';
+
+.crud-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+
+  &__search {
+    .ant-form-item {
+      margin-bottom: 8px;
+      margin-right: 12px;
+    }
+
+    .ant-form-item-label > label {
+      color: @text-color-primary;
+      font-size: 13px;
+    }
+  }
+
+  &__toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+    gap: 10px;
+
+    .ant-btn {
+      border-radius: 8px;
+      font-weight: 500;
+    }
+
+    .ant-btn-primary {
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+      background: linear-gradient(135deg, @primary-color 0%, #6366f1 100%);
+      border: none;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+
+      &:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.3);
+        background: linear-gradient(135deg, #3b82f6 0%, #818cf8 100%) !important;
+      }
+    }
+  }
+
+  &__stats {
+    color: @text-color-secondary;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+    .ant-tag {
+      border-radius: 6px;
+    }
+  }
+
+  /* 表格美化 - 所有背景使用不透明纯色，避免固定列出现半透明 */
+  .ant-table-wrapper {
+    .ant-table {
+      border-radius: 10px;
+      overflow: hidden;
+      background: #ffffff;
+    }
+
+    .ant-table-thead > tr > th {
+      background: #f8fafc !important;
+      color: @text-color-primary !important;
+      font-weight: 600 !important;
+      font-size: 13px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.06) !important;
+
+      &::before {
+        display: none !important;
+      }
+    }
+
+    .ant-table-tbody > tr > td {
+      background: #ffffff;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.04) !important;
+      font-size: 13.5px;
+      transition: background 0.2s ease;
+    }
+
+    /* hover 行：使用不透明纯色，确保固定列（操作列）也保持同色 */
+    .ant-table-tbody > tr:hover > td,
+    .ant-table-tbody > tr.ant-table-row-hover > td,
+    .ant-table-tbody > tr > td.ant-table-cell-row-hover {
+      background: #f1f5fd !important;
+    }
+
+    /* 固定列：显式设置为白色（hover 时覆盖为浅蓝），避免出现透明导致底下内容穿透 */
+    .ant-table-cell-fix-left,
+    .ant-table-cell-fix-right {
+      background: #ffffff !important;
+    }
+    .ant-table-thead > tr > th.ant-table-cell-fix-left,
+    .ant-table-thead > tr > th.ant-table-cell-fix-right {
+      background: #f8fafc !important;
+    }
+    .ant-table-tbody > tr:hover > td.ant-table-cell-fix-left,
+    .ant-table-tbody > tr:hover > td.ant-table-cell-fix-right,
+    .ant-table-tbody > tr.ant-table-row-hover > td.ant-table-cell-fix-left,
+    .ant-table-tbody > tr.ant-table-row-hover > td.ant-table-cell-fix-right {
+      background: #f1f5fd !important;
+    }
+  }
+
+  .ant-btn {
+    border-radius: 8px;
+  }
+}

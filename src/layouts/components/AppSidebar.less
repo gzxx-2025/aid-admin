@@ -1,0 +1,281 @@
+@import '@/assets/styles/variables.less';
+
+.app-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+  position: relative;
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 1px;
+    background: linear-gradient(
+      180deg,
+      transparent,
+      rgba(15, 23, 42, 0.06) 20%,
+      rgba(15, 23, 42, 0.06) 80%,
+      transparent
+    );
+  }
+
+  &__logo {
+    height: @header-height;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 0 18px;
+    gap: 10px;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.05);
+    position: relative;
+
+    img {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+    }
+  }
+
+  &__title {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    background: linear-gradient(135deg, @primary-color 0%, #7c3aed 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    white-space: nowrap;
+  }
+
+  &__brand {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  &__menu-wrap {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 10px 10px 16px;
+
+    &::-webkit-scrollbar-thumb {
+      background: rgba(15, 23, 42, 0.1);
+    }
+  }
+
+  .sidebar-version-trigger {
+    height: 20px;
+    max-width: 130px;
+    padding: 1px 6px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    font-size: 11px;
+    line-height: 16px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+
+    &.is-current {
+      color: #16a34a;
+      background: #f0fdf4;
+      border-color: #bbf7d0;
+    }
+    &.is-update {
+      color: #c2410c;
+      background: #fff7ed;
+      border-color: #fed7aa;
+    }
+    span {
+      font-size: 10px;
+    }
+  }
+
+  &__menu {
+    border-inline-end: none !important;
+    background: transparent !important;
+
+    .ant-menu-item,
+    .ant-menu-submenu-title {
+      border-radius: 10px !important;
+      height: 42px !important;
+      line-height: 42px !important;
+      margin-inline: 0 !important;
+      margin-block: 2px !important;
+      font-size: 13.5px;
+      transition: all 0.2s ease !important;
+    }
+
+    .ant-menu-item:hover,
+    .ant-menu-submenu-title:hover {
+      background: rgba(37, 99, 235, 0.06) !important;
+      color: @primary-color !important;
+    }
+
+    .ant-menu-item-selected {
+      font-weight: 600;
+      background: linear-gradient(135deg, rgba(37, 99, 235, 0.1) 0%, rgba(124, 58, 237, 0.1) 100%) !important;
+      color: @primary-color !important;
+      position: relative;
+
+      &::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 8px;
+        bottom: 8px;
+        width: 3px;
+        border-radius: 0 3px 3px 0;
+        background: linear-gradient(180deg, @primary-color, #7c3aed);
+      }
+
+      .ant-menu-item-icon,
+      .anticon {
+        color: @primary-color !important;
+      }
+    }
+
+    .ant-menu-sub.ant-menu-inline {
+      background: transparent !important;
+    }
+
+    .ant-menu-submenu-arrow {
+      opacity: 0.5;
+    }
+
+    .ant-menu-item-icon,
+    .anticon {
+      font-size: 15px !important;
+      min-width: 15px !important;
+    }
+  }
+
+  &.is-collapsed {
+    .app-sidebar__logo {
+      justify-content: center;
+      padding: 0;
+    }
+    .app-sidebar__menu-wrap {
+      padding: 10px 6px;
+    }
+    .app-sidebar__menu {
+      .ant-menu-item,
+      .ant-menu-submenu-title {
+        padding-inline: 0 !important;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+    }
+  }
+
+  &__user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    margin: 10px;
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.03);
+    cursor: pointer;
+    transition: all 0.2s ease;
+
+    &:hover {
+      background: linear-gradient(135deg, rgba(37, 99, 235, 0.08) 0%, rgba(124, 58, 237, 0.08) 100%);
+      transform: translateY(-1px);
+    }
+
+    &-name {
+      flex: 1;
+      font-size: 13px;
+      color: @text-color-primary;
+      font-weight: 500;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    &-arrow {
+      font-size: 10px;
+      color: @text-color-secondary;
+    }
+
+    &.is-collapsed {
+      justify-content: center;
+      padding: 12px 0;
+      margin: 10px 6px;
+    }
+  }
+}
+
+.sidebar-version-popover .ant-popover-inner {
+  padding: 0;
+  width: 288px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.version-popover {
+  &__header {
+    height: 44px;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  &__body {
+    padding: 14px 12px 10px;
+    text-align: center;
+  }
+  &__number {
+    font-size: 24px;
+    line-height: 32px;
+    font-weight: 700;
+    color: #111827;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 7px;
+  }
+  &__ok {
+    color: #22c55e;
+    font-size: 17px;
+  }
+  &__update {
+    margin: 12px 0 8px;
+    padding: 9px 10px;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #c2410c;
+    background: #fff7ed;
+    border: 1px solid #fdba74;
+    border-radius: 6px;
+  }
+  &__actions {
+    display: flex;
+    gap: 8px;
+
+    // 「立即更新/版本管理」与「版本回退」同行均分，仅一个按钮时占满整行
+    .ant-btn {
+      flex: 1;
+      min-width: 0;
+      padding-inline: 8px;
+    }
+  }
+  &__links {
+    margin-top: 10px;
+    justify-content: center;
+    font-size: 12px;
+  }
+}
