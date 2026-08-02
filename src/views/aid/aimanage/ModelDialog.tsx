@@ -303,7 +303,15 @@ export default function ModelDialog({ open, title, provider, data, onCancel, onO
             </Col>
           )}
           <Col span={12}><Form.Item name="apiVersion" label="API版本"><Input placeholder="特定路由后缀(选填)" /></Form.Item></Col>
-          <Col span={12}><Form.Item name="apiSuffix" label="网关后缀"><Input placeholder="如 /v1/chat/completions" /></Form.Item></Col>
+          <Col span={12}>
+            <Form.Item
+              name="apiSuffix"
+              label="模型接口路径"
+              tooltip="填写完整接口路径前缀，包含模型所需的 /v1、/api/v3 等版本路径；服务商网关中不填写这些内容。"
+            >
+              <Input placeholder="如 /v1/chat/completions" />
+            </Form.Item>
+          </Col>
           {modelType === 'text' && (
             <Col span={24}>
               <Form.Item

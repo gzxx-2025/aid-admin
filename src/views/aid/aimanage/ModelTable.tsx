@@ -73,7 +73,7 @@ export default function ModelTable({ provider, list, loading, query, onQueryChan
     { title: '单模型倍率', dataIndex: 'billingMultiplier', width: 100, render: (v: any) => v == null ? '1.00' : Number(v).toFixed(2) },
     { title: '计费模式', dataIndex: 'billingMode', width: 90, render: (v: string) => v ? <Tag color={getAntdTagColor(BILLING_MODE_OPTIONS, v)}>{getLabelByValue(BILLING_MODE_OPTIONS, v)}</Tag> : '--' },
     { title: '计费口径', key: 'meter', width: 100, render: (_: any, r: Model) => { const mt = resolveMeterType(r); return <Tag color={getAntdTagColor(METER_TYPE_OPTIONS, mt)}>{getLabelByValue(METER_TYPE_OPTIONS, mt)}</Tag>; } },
-    { title: '网关后缀', dataIndex: 'apiSuffix', width: 100, ellipsis: true },
+    { title: '模型接口路径', dataIndex: 'apiSuffix', width: 130, ellipsis: true },
     { title: '并发', key: 'maxConcurrency', width: 70, render: (_: any, r: Model) => { const n = parseMaxConcurrency(r.scheduleStrategyJson); return n ? <Tag color="purple">{n}</Tag> : <span style={{ color: '#cbd5e1' }}>不限</span>; } },
     { title: '优先级', dataIndex: 'priority', width: 70 },
     { title: 'API版本', dataIndex: 'apiVersion', width: 90, ellipsis: true },

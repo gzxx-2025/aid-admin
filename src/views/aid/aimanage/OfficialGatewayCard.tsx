@@ -10,6 +10,7 @@ import {
 import type { Model, Provider } from './types';
 
 const { Text, Paragraph } = Typography;
+const DEFAULT_OFFICIAL_API_BASE_URL = 'https://api.aidstudio.com.cn';
 
 interface Props {
   /** 全量模型列表（供例外模型选择） */
@@ -23,7 +24,7 @@ interface Props {
  */
 export default function OfficialGatewayCard({ models, providers }: Props) {
   const [enabled, setEnabled] = useState(false);
-  const [baseUrl, setBaseUrl] = useState('');
+  const [baseUrl, setBaseUrl] = useState(DEFAULT_OFFICIAL_API_BASE_URL);
   const [apiKey, setApiKey] = useState('');
   const [apiKeyMasked, setApiKeyMasked] = useState<string | undefined>();
   const [hasApiKey, setHasApiKey] = useState(false);
@@ -38,7 +39,7 @@ export default function OfficialGatewayCard({ models, providers }: Props) {
     const res = await getOfficialGateway();
     const data = res.data;
     setEnabled(!!data?.enabled);
-    setBaseUrl(data?.baseUrl || '');
+    setBaseUrl(data?.baseUrl || DEFAULT_OFFICIAL_API_BASE_URL);
     setApiKeyMasked(data?.apiKeyMasked);
     setHasApiKey(!!data?.hasApiKey);
     setExcludedIds(data?.excludedModelIds || []);
@@ -235,7 +236,7 @@ export default function OfficialGatewayCard({ models, providers }: Props) {
       <div className="official-gateway-card__form">
         <Input
           addonBefore={<><ApiOutlined /> 官方网关地址</>}
-          placeholder="https://api.example.com，支持 {provider} 占位符按厂商编码展开"
+          placeholder={DEFAULT_OFFICIAL_API_BASE_URL}
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
           allowClear

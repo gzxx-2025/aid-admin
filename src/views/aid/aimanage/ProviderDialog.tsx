@@ -55,6 +55,22 @@ const EXTRA_QUERY_PRESETS: KvPreset[] = [
   { key: 'region', value: 'cn-beijing', label: 'region', tooltip: '阿里云区域代码' }
 ];
 
+/** 服务商网关只允许协议、主机和可选端口，接口版本与路径由模型配置承载。 */
+const validateBaseGatewayUrl = (_: unknown, value?: string) => {
+  if (!value?.trim()) return Promise.resolve();
+  try {
+    const url = new URL(value.trim());
+    const supportedProtocol = url.protocol === 'http:' || url.protocol === 'https:';
+    const basePath = url.pathname === '/' || url.pathname === '';
+    if (!supportedProtocol || !url.hostname || url.username || url.password || !basePath || url.search || url.hash) {
+      return Promise.reject(new Error('仅填写基础网关，例如 https://api.vidu.cn'));
+    }
+    return Promise.resolve();
+  } catch {
+    return Promise.reject(new Error('请输入合法的 HTTP/HTTPS 基础网关'));
+  }
+};
+
 export default function ProviderDialog({ open, title, data, onCancel, onOk }: Props) {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
@@ -113,6 +129,7 @@ export default function ProviderDialog({ open, title, data, onCancel, onOk }: Pr
     const values = await form.validateFields();
     setLoading(true);
     try {
+      values.baseUrl = String(values.baseUrl || '').trim().replace(/\/$/, '');
       values.supportsCallback = strategy.supportsCallback;
       const strategyToSave: any = { ...strategy };
       const callbackBaseUrl = String(values.callbackBaseUrl || '').trim();
@@ -233,8 +250,6 @@ export default function ProviderDialog({ open, title, data, onCancel, onOk }: Pr
               tooltip="厂家品牌图标，左侧服务商列表与模型相关接口会带出展示。上传方式（本地/OSS/COS）由系统配置自动决定。"
             >
               <ImageUpload
-                action={(import.meta.env.VITE_APP_BASE_API || '') + '/api/user/oss/upload'}
-                name="files"
                 maxCount={1}
                 maxSize={5}
                 accept="image/*"
@@ -242,7 +257,19 @@ export default function ProviderDialog({ open, title, data, onCancel, onOk }: Pr
             </Form.Item>
           </Col>
           <Col span={12}><Form.Item name="status" label="状态"><Select options={ENABLE_STATUS_OPTIONS.map((o) => ({ label: o.label, value: o.value }))} /></Form.Item></Col>
-          <Col span={24}><Form.Item name="baseUrl" label="API 网关地址" rules={[{ required: true }]}><Input placeholder="https://ark.cn-beijing.volces.com/api/v3" /></Form.Item></Col>
+          <Col span={24}>
+            <Form.Item
+              name="baseUrl"
+              label="API 网关地址"
+              tooltip="只能填写协议、域名和可选端口；/v1、/api/v3 等版本路径请填写到对应模型的接口路径中。"
+              rules={[
+                { required: true, message: '请输入API基础网关地址' },
+                { validator: validateBaseGatewayUrl }
+              ]}
+            >
+              <Input placeholder="https://api.vidu.cn" />
+            </Form.Item>
+          </Col>
           <Col span={12}>
             <Form.Item name="apiKey" label="API 密钥" rules={[{ required: !data?.id }]}>
               <Input.Password placeholder={data?.id ? '已配置（不显示，留空不修改）' : '官方 API 密钥(加密存储)'} visibilityToggle={false} />
