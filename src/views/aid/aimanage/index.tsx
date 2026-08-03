@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, message } from 'antd';
 import {
-  listProvider, getProvider, addProvider, updateProvider, delProvider,
+  listProvider, getProvider, addProvider, updateProvider, updateProviderStatus, delProvider,
   listModel, getModel, addModel, updateModel, delModel
 } from '@/api/aid/aimanage';
 import { cleanExpiredVoices } from '@/api/aid/voicelibrary';
@@ -103,7 +103,7 @@ export default function AimanagePage() {
   /** 行内开关直接启停服务商：只提交 id + status，其余字段不动 */
   const handleToggleProviderStatus = async (p: Provider, enabled: boolean) => {
     const status = enabled ? '0' : '1';
-    await updateProvider({ id: p.id, status });
+    await updateProviderStatus({ id: p.id, status });
     message.success(enabled ? `已启用【${p.providerName}】` : `已停用【${p.providerName}】`);
     // 本地同步列表与选中项状态，避免整页刷新造成闪烁
     setProviderList((prev) => prev.map((it) => (it.id === p.id ? { ...it, status } : it)));

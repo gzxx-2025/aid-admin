@@ -18,6 +18,11 @@ export function updateProvider(data) {
   return request({ url: '/aid/aidprovider', method: 'put', data })
 }
 
+/** 只切换服务商启停状态，避免触发完整配置编辑校验。 */
+export function updateProviderStatus(data: { id: number; status: '0' | '1' }) {
+  return request({ url: '/aid/aidprovider/status', method: 'put', data })
+}
+
 export function delProvider(id) {
   return request({ url: '/aid/aidprovider/' + id, method: 'delete' })
 }

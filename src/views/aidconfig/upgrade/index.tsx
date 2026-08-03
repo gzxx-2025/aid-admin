@@ -36,12 +36,18 @@ import {
 } from '@ant-design/icons';
 
 import {
+  applyDeploymentConfig,
+  DeploymentConfig,
+  DeploymentConfigSaveParams,
+  getDeploymentConfig,
   getUpdaterLogs,
   getUpgradeSource,
+  rollbackDeploymentConfig,
   rollbackSystem,
   saveUpgradeSource,
   startUpdaterUpgrade,
   startUpgrade,
+  validateDeploymentConfig,
   UpdaterLog,
   UpgradeSourceSetting
 } from '@/api/aidconfig/upgrade';
@@ -61,7 +67,39 @@ const UPDATER_TAG: Record<string, { color: string; text: string }> = {
 const TASK_ACTION_TEXT: Record<string, string> = {
   UPGRADE: '系统升级',
   UPDATER_UPGRADE: '升级器升级',
-  ROLLBACK: '版本回退'
+  ROLLBACK: '版本回退',
+  CONFIG_VALIDATE: '配置校验',
+  CONFIG_APPLY: '配置应用',
+  CONFIG_ROLLBACK: '配置恢复'
+};
+
+const deploymentToForm = (config: DeploymentConfig): DeploymentConfigSaveParams => {
+  const value = config.values || {};
+  return {
+    configPath: config.configPath,
+    httpPort: value.HTTP_PORT,
+    adminPort: value.ADMIN_PORT,
+    backendPort: value.BACKEND_PORT,
+    dataRoot: value.DATA_ROOT,
+    mysqlPort: value.MYSQL_PORT,
+    dbHost: value.DB_HOST,
+    dbPort: value.DB_PORT,
+    dbName: value.DB_NAME,
+    dbUsername: value.DB_USERNAME,
+    redisHost: value.REDIS_HOST,
+    redisPort: value.REDIS_PORT,
+    javaOpts: value.JAVA_OPTS,
+    composeProfiles: value.COMPOSE_PROFILES,
+    rocketmqEnabled: value.ROCKETMQ_ENABLED,
+    rocketmqNameserver: value.ROCKETMQ_NAMESERVER,
+    mysqlBufferPool: value.MYSQL_BUFFER_POOL,
+    mysqlMaxConnections: value.MYSQL_MAX_CONNECTIONS,
+    redisMaxmemory: value.REDIS_MAXMEMORY,
+    redisMaxmemoryPolicy: value.REDIS_MAXMEMORY_POLICY,
+    webNodeOptions: value.WEB_NODE_OPTIONS,
+    mqNamesrvJavaOpts: value.MQ_NAMESRV_JAVA_OPTS,
+    mqBrokerJavaOpts: value.MQ_BROKER_JAVA_OPTS
+  };
 };
 
 const TASK_STATE_META: Record<string, { alert: 'info' | 'success' | 'error'; text: string }> = {
@@ -90,6 +128,10 @@ export default function UpgradeConfigPage() {
   const [sourceLoadError, setSourceLoadError] = useState(false);
   const [sourceSaving, setSourceSaving] = useState(false);
   const [sourceDirty, setSourceDirty] = useState(false);
+  const [deploymentConfig, setDeploymentConfig] = useState<DeploymentConfig | null>(null);
+  const [deploymentLoading, setDeploymentLoading] = useState(true);
+  const [deploymentSaving, setDeploymentSaving] = useState(false);
+  const [deploymentDirty, setDeploymentDirty] = useState(false);
   const [rollbackVersion, setRollbackVersion] = useState<string>();
   const [rollbackConfirmOpen, setRollbackConfirmOpen] = useState(false);
   const [rollbackConfirmText, setRollbackConfirmText] = useState('');
@@ -98,6 +140,7 @@ export default function UpgradeConfigPage() {
   const pollingBaseline = useRef('');
   const pollingTaskSeen = useRef(false);
   const [sourceForm] = Form.useForm<UpgradeSourceSetting>();
+  const [deploymentForm] = Form.useForm<DeploymentConfigSaveParams>();
 
   const updater = status?.updater;
   const updaterTag = UPDATER_TAG[updater?.status || 'UNKNOWN'] || UPDATER_TAG.UNKNOWN;
@@ -137,6 +180,21 @@ export default function UpgradeConfigPage() {
     }
   }, [sourceForm]);
 
+  const loadDeployment = useCallback(async () => {
+    setDeploymentLoading(true);
+    try {
+      const res = await getDeploymentConfig();
+      const next = res.data || null;
+      setDeploymentConfig(next);
+      if (next) deploymentForm.setFieldsValue(deploymentToForm(next));
+      setDeploymentDirty(false);
+    } catch {
+      setDeploymentConfig(null);
+    } finally {
+      setDeploymentLoading(false);
+    }
+  }, [deploymentForm]);
+
   const loadUpdaterLogs = useCallback(async () => {
     setLogsLoading(true);
     try {
@@ -154,7 +212,8 @@ export default function UpgradeConfigPage() {
       loadStatus(false).catch(() => undefined);
     }
     loadSource();
-  }, [loadSource, loadStatus]);
+    loadDeployment();
+  }, [loadDeployment, loadSource, loadStatus]);
 
   useEffect(() => {
     if (installOpen) {
@@ -180,6 +239,7 @@ export default function UpgradeConfigPage() {
         }
         if (pollingTaskSeen.current && nextTask?.state !== 'RUNNING') {
           setTaskPolling(false);
+          loadDeployment().catch(() => undefined);
         } else if (attempts >= 60) {
           setTaskPolling(false);
         }
@@ -196,7 +256,7 @@ export default function UpgradeConfigPage() {
       window.clearTimeout(firstTimer);
       window.clearInterval(timer);
     };
-  }, [loadStatusShared, taskPolling]);
+  }, [loadDeployment, loadStatusShared, taskPolling]);
 
   const beginTaskPolling = useCallback(() => {
     pollingBaseline.current = taskKey(useUpgradeStore.getState().status?.updater?.lastTask);
@@ -220,6 +280,56 @@ export default function UpgradeConfigPage() {
     } finally {
       setSourceSaving(false);
     }
+  };
+
+  const handleValidateDeployment = async () => {
+    const values = await deploymentForm.validateFields();
+    setDeploymentSaving(true);
+    try {
+      const res: any = await validateDeploymentConfig(values);
+      message.success(res?.msg || '配置校验任务已受理');
+      beginTaskPolling();
+    } finally {
+      setDeploymentSaving(false);
+    }
+  };
+
+  const handleApplyDeployment = async () => {
+    const values = await deploymentForm.validateFields();
+    Modal.confirm({
+      title: '应用配置并重启服务？',
+      icon: <ExclamationCircleOutlined />,
+      content: '升级器会先备份旧配置，再校验、原子写入并重启。健康检查失败将自动恢复旧配置。',
+      okText: '应用并重启',
+      cancelText: '取消',
+      onOk: async () => {
+        setDeploymentSaving(true);
+        try {
+          const res: any = await applyDeploymentConfig(values);
+          message.success(res?.msg || '配置应用任务已受理');
+          setDeploymentDirty(false);
+          beginTaskPolling();
+        } finally {
+          setDeploymentSaving(false);
+        }
+      }
+    });
+  };
+
+  const handleRollbackDeployment = () => {
+    Modal.confirm({
+      title: '恢复上一份部署配置？',
+      icon: <ExclamationCircleOutlined />,
+      content: '恢复后服务会重新启动。仅恢复最近一次通过后台应用配置前的备份。',
+      okText: '恢复并重启',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        const res: any = await rollbackDeploymentConfig();
+        message.success(res?.msg || '配置恢复任务已受理');
+        beginTaskPolling();
+      }
+    });
   };
 
   const handleStartUpgrade = () => {
@@ -313,6 +423,17 @@ export default function UpgradeConfigPage() {
         />
       );
     }
+    if (status.hasUpdate && updater?.hasUpdate) {
+      return (
+        <Alert
+          type="warning"
+          showIcon
+          message="请先升级升级器"
+          description={`系统 v${status.latestVersion || '-'} 与升级器 v${updater.latestVersion || '-'} 均有更新。为保证SQL、备份和回滚协议兼容，必须先完成升级器更新。`}
+          action={<Button type="primary" onClick={handleUpgradeUpdater}>先升级升级器</Button>}
+        />
+      );
+    }
     if (status.hasUpdate && status.belowMinimumVersion) {
       return (
         <Alert
@@ -350,8 +471,8 @@ export default function UpgradeConfigPage() {
             <Button
               type="primary"
               icon={<RocketOutlined />}
-              disabled={!updater?.ready}
-              title={updater?.ready ? undefined : '需先安装并启动升级器'}
+              disabled={!updater?.ready || updater?.hasUpdate}
+              title={updater?.hasUpdate ? '必须先升级升级器' : updater?.ready ? undefined : '需先安装并启动升级器'}
               onClick={handleStartUpgrade}
             >
               立即升级
@@ -613,6 +734,166 @@ export default function UpgradeConfigPage() {
     </div>
   );
 
+  const deploymentPanel = (
+    <div className="upgrade-page__tab-panel">
+      <div className="upgrade-page__section-toolbar">
+        <Space>
+          <Text strong>运行配置</Text>
+          {deploymentConfig && <Tag color="blue">{deploymentConfig.mode === 'docker' ? 'Docker' : 'systemd'}</Tag>}
+          {deploymentDirty && <Tag color="gold">有未应用修改</Tag>}
+        </Space>
+        <Space wrap>
+          <Button icon={<ReloadOutlined />} loading={deploymentLoading} onClick={loadDeployment}>重新加载</Button>
+          <Button disabled={!deploymentConfig} loading={deploymentSaving} onClick={handleValidateDeployment}>校验配置</Button>
+          <Button danger disabled={!deploymentConfig} onClick={handleRollbackDeployment}>恢复上次配置</Button>
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            disabled={!deploymentConfig || !deploymentDirty}
+            loading={deploymentSaving}
+            onClick={handleApplyDeployment}
+          >
+            应用并重启
+          </Button>
+        </Space>
+      </div>
+
+      {!deploymentLoading && !deploymentConfig && (
+        <Alert
+          type="warning"
+          showIcon
+          message="运行配置不可用"
+          description="请先把升级器更新到支持配置管理的版本，并确认升级器正在运行。"
+        />
+      )}
+
+      {deploymentConfig && (
+        <Alert
+          type="info"
+          showIcon
+          message={`当前生效文件：${deploymentConfig.configPath}`}
+          description={`自定义文件只能放在 ${deploymentConfig.allowedConfigRoot}；密钥不会回显，输入框留空表示保持不变。`}
+          className="upgrade-page__modal-alert"
+        />
+      )}
+
+      <Spin spinning={deploymentLoading}>
+        <Form
+          form={deploymentForm}
+          layout="vertical"
+          disabled={!deploymentConfig || deploymentLoading}
+          onValuesChange={() => setDeploymentDirty(true)}
+        >
+          <Form.Item
+            name="configPath"
+            label="配置文件路径"
+            rules={[{ required: true, message: '请输入配置文件路径' }]}
+            extra={`默认：${deploymentConfig?.defaultConfigPath || '-'}；仅允许 .env/.conf，升级器会校验目录与软链接。`}
+          >
+            <Input />
+          </Form.Item>
+
+          <Row gutter={20}>
+            <Col xs={24} md={8}><Form.Item name="httpPort" label="用户端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="adminPort" label="后台管理端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="backendPort" label="后端端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
+          </Row>
+
+          {deploymentConfig?.mode === 'docker' && (
+            <Row gutter={20}>
+              <Col xs={24} md={12}>
+                <Form.Item name="dataRoot" label="数据根目录" extra="运行后禁止直接迁移；如需迁移应先停机并整体搬迁数据。">
+                  <Input disabled />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={12}><Form.Item name="mysqlPort" label="MySQL宿主机端口"><Input /></Form.Item></Col>
+            </Row>
+          )}
+
+          <Row gutter={20}>
+            {deploymentConfig?.mode === 'systemd' && (
+              <>
+                <Col xs={24} md={8}><Form.Item name="dbHost" label="数据库地址" rules={[{ required: true }]}><Input /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="dbPort" label="数据库端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
+              </>
+            )}
+            <Col xs={24} md={8}><Form.Item name="dbName" label="数据库名称" rules={[{ required: true }]}><Input disabled={deploymentConfig?.mode === 'docker'} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="dbUsername" label="数据库账号" rules={[{ required: true }]}><Input disabled={deploymentConfig?.mode === 'docker'} /></Form.Item></Col>
+            {deploymentConfig?.mode === 'systemd' && (
+              <Col xs={24} md={8}>
+                <Form.Item name="dbPassword" label="数据库密码">
+                  <Input.Password autoComplete="new-password" placeholder={deploymentConfig.configuredSecrets.includes('DB_PASSWORD') ? '已配置，留空保持不变' : '请输入数据库密码'} />
+                </Form.Item>
+              </Col>
+            )}
+          </Row>
+
+          {deploymentConfig?.mode === 'docker' && (
+            <Alert
+              type="warning"
+              showIcon
+              message="Docker内置MySQL密码和库名不能在运行后直接修改"
+              description="修改 .env 不会同步修改已有MySQL账号，必须使用专用数据库迁移或密码轮换流程。"
+              className="upgrade-page__modal-alert"
+            />
+          )}
+
+          <Row gutter={20}>
+            <Col xs={24} md={8}><Form.Item name="redisHost" label="Redis地址" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="redisPort" label="Redis端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="redisPassword" label="Redis密码">
+                <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('REDIS_PASSWORD') ? '已配置，留空保持不变' : '无密码可留空'} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={20}>
+            <Col xs={24} md={12}>
+              <Form.Item name="tokenSecret" label="JWT密钥" extra="留空保持当前密钥；更换后已有登录状态会失效。">
+                <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('TOKEN_SECRET') ? '已配置，留空保持不变' : '请输入强随机密钥'} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}><Form.Item name="javaOpts" label="JVM参数"><Input placeholder="-Xms1g -Xmx2g" /></Form.Item></Col>
+          </Row>
+
+          <Row gutter={20}>
+            <Col xs={24} md={8}>
+              <Form.Item name="rocketmqEnabled" label="启用RocketMQ">
+                <Radio.Group options={[{ label: '关闭', value: 'false' }, { label: '启用', value: 'true' }]} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={16}><Form.Item name="rocketmqNameserver" label="RocketMQ NameServer"><Input /></Form.Item></Col>
+          </Row>
+
+          {deploymentConfig?.mode === 'docker' && (
+            <Collapse
+              ghost
+              items={[{
+                key: 'docker-tuning',
+                label: 'Docker组件与资源调优',
+                children: (
+                  <>
+                    <Form.Item name="composeProfiles" label="Compose Profiles" extra="默认 redis；启用内置MQ时使用 redis,mq。"><Input /></Form.Item>
+                    <Row gutter={20}>
+                      <Col xs={24} md={12}><Form.Item name="mysqlBufferPool" label="MySQL缓冲池"><Input placeholder="2G" /></Form.Item></Col>
+                      <Col xs={24} md={12}><Form.Item name="mysqlMaxConnections" label="MySQL最大连接数"><Input placeholder="500" /></Form.Item></Col>
+                      <Col xs={24} md={12}><Form.Item name="redisMaxmemory" label="Redis内存上限"><Input placeholder="1gb" /></Form.Item></Col>
+                      <Col xs={24} md={12}><Form.Item name="redisMaxmemoryPolicy" label="Redis淘汰策略"><Input placeholder="noeviction" /></Form.Item></Col>
+                      <Col xs={24} md={12}><Form.Item name="webNodeOptions" label="Web Node参数"><Input /></Form.Item></Col>
+                      <Col xs={24} md={12}><Form.Item name="mqNamesrvJavaOpts" label="MQ NameServer JVM"><Input /></Form.Item></Col>
+                      <Col xs={24} md={12}><Form.Item name="mqBrokerJavaOpts" label="MQ Broker JVM"><Input /></Form.Item></Col>
+                    </Row>
+                  </>
+                )
+              }]}
+            />
+          )}
+        </Form>
+      </Spin>
+    </div>
+  );
+
   return (
     <div className="crud-page upgrade-page">
       <div className="upgrade-page__header">
@@ -679,6 +960,11 @@ export default function UpgradeConfigPage() {
                 key: 'settings',
                 label: <Space><SettingOutlined />升级配置{sourceDirty && <span className="upgrade-page__dirty-dot" />}</Space>,
                 children: settingsPanel
+              },
+              {
+                key: 'deployment',
+                label: <Space><SettingOutlined />运行配置{deploymentDirty && <span className="upgrade-page__dirty-dot" />}</Space>,
+                children: deploymentPanel
               }
             ]}
           />

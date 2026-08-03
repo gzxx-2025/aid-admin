@@ -17,6 +17,8 @@ export interface UpdaterStatus {
   status: string;
   /** 本地升级器版本 */
   version?: string;
+  /** 升级器任务协议版本 */
+  protocolVersion?: number;
   /** 发布方最新升级器版本（来自更新清单） */
   latestVersion?: string;
   /** 升级器是否有新版本（支持在线升级） */
@@ -28,6 +30,49 @@ export interface UpdaterStatus {
   ready: boolean;
   /** 最近一次任务执行结果 */
   lastTask?: UpdaterLastTask;
+  /** 升级器实际加载的脱敏部署配置 */
+  deploymentConfig?: DeploymentConfig;
+}
+
+/** Docker/systemd 共用的部署运行配置（密钥原文永不回显） */
+export interface DeploymentConfig {
+  mode: 'docker' | 'systemd';
+  configPath: string;
+  defaultConfigPath: string;
+  allowedConfigRoot: string;
+  values: Record<string, string>;
+  configuredSecrets: string[];
+}
+
+/** 部署配置结构化保存参数；密钥留空表示保持不变 */
+export interface DeploymentConfigSaveParams {
+  configPath?: string;
+  httpPort?: string;
+  adminPort?: string;
+  backendPort?: string;
+  dataRoot?: string;
+  mysqlRootPassword?: string;
+  mysqlPort?: string;
+  dbHost?: string;
+  dbPort?: string;
+  dbName?: string;
+  dbUsername?: string;
+  dbPassword?: string;
+  redisHost?: string;
+  redisPort?: string;
+  redisPassword?: string;
+  tokenSecret?: string;
+  javaOpts?: string;
+  composeProfiles?: string;
+  rocketmqEnabled?: string;
+  rocketmqNameserver?: string;
+  mysqlBufferPool?: string;
+  mysqlMaxConnections?: string;
+  redisMaxmemory?: string;
+  redisMaxmemoryPolicy?: string;
+  webNodeOptions?: string;
+  mqNamesrvJavaOpts?: string;
+  mqBrokerJavaOpts?: string;
 }
 
 /** 官方API地址同步状态 */
@@ -152,6 +197,40 @@ export function getUpdaterLogs() {
   return request<UpdaterLog>({
     url: '/aidconfig/upgrade/updater/logs',
     method: 'get'
+  });
+}
+
+/** 查询升级器当前实际加载的部署运行配置 */
+export function getDeploymentConfig() {
+  return request<DeploymentConfig>({
+    url: '/aidconfig/upgrade/deployment-config',
+    method: 'get'
+  });
+}
+
+/** 只校验部署配置，不写入、不重启 */
+export function validateDeploymentConfig(data: DeploymentConfigSaveParams) {
+  return request<void>({
+    url: '/aidconfig/upgrade/deployment-config/validate',
+    method: 'post',
+    data
+  });
+}
+
+/** 备份、应用部署配置并由升级器重启服务 */
+export function applyDeploymentConfig(data: DeploymentConfigSaveParams) {
+  return request<void>({
+    url: '/aidconfig/upgrade/deployment-config/apply',
+    method: 'post',
+    data
+  });
+}
+
+/** 恢复上一份部署配置并重启服务 */
+export function rollbackDeploymentConfig() {
+  return request<void>({
+    url: '/aidconfig/upgrade/deployment-config/rollback',
+    method: 'post'
   });
 }
 
