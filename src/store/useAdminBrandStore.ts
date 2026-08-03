@@ -13,25 +13,25 @@ interface AdminBrandState extends AdminBrandConfig {
   load: () => Promise<void>;
 }
 
+const DEFAULT_FAVICON = '/favicon.ico';
+
 /** 动态替换浏览器页签图标 */
 function applyFavicon(url?: string) {
-  if (!url) return;
   let link = document.querySelector("link[rel*='icon']") as HTMLLinkElement | null;
   if (!link) {
     link = document.createElement('link');
     link.rel = 'icon';
     document.head.appendChild(link);
   }
-  link.href = url;
+  link.href = url || DEFAULT_FAVICON;
 }
 
 /**
- * 后台品牌图片全局状态：登录页、侧栏、favicon 共用。
+ * 平台品牌图片全局状态：登录页、侧栏共用平台 LOGO，并统一维护 favicon。
  * 未登录也可拉取（匿名接口），失败时回退内置默认图。
  */
 export const useAdminBrandStore = create<AdminBrandState>((set, get) => ({
-  loginLogoUrl: undefined,
-  sidebarLogoUrl: undefined,
+  platformLogoUrl: undefined,
   faviconUrl: undefined,
   loaded: false,
   loading: false,
@@ -44,20 +44,21 @@ export const useAdminBrandStore = create<AdminBrandState>((set, get) => ({
     try {
       const res: any = await getAdminBrandPublic();
       const data: AdminBrandConfig = res?.data || {};
-      const login = data.loginLogoUrl || defaultLogo;
-      const sidebar = data.sidebarLogoUrl || defaultLogo;
+      const platformLogo = data.platformLogoUrl || defaultLogo;
       applyFavicon(data.faviconUrl);
       set({
-        loginLogoUrl: data.loginLogoUrl,
-        sidebarLogoUrl: data.sidebarLogoUrl,
+        platformLogoUrl: data.platformLogoUrl,
         faviconUrl: data.faviconUrl,
-        resolvedLoginLogo: login,
-        resolvedSidebarLogo: sidebar,
+        resolvedLoginLogo: platformLogo,
+        resolvedSidebarLogo: platformLogo,
         loaded: true,
         loading: false
       });
     } catch {
+      applyFavicon();
       set({
+        platformLogoUrl: undefined,
+        faviconUrl: undefined,
         resolvedLoginLogo: defaultLogo,
         resolvedSidebarLogo: defaultLogo,
         loaded: true,

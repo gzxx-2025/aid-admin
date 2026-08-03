@@ -111,24 +111,46 @@ export const CATEGORY_FIELD_LABELS: Record<string, Record<string, string>> = {
     publicKey: '微信支付公钥 (pub_key.pem)',
     notifyUrl: '异步通知地址'
   },
-  // 基础配置：协议/隐私政策/版本号/备案号/交流二维码等合规与首屏展示内容
+  // 基础配置：协议/隐私政策/备案号/交流二维码等合规与首屏展示内容
   basic: {
+    site_name: '网站名称',
+    site_description: '网站描述',
+    site_keywords: '网站关键词',
     personal_information_collection_list: '个人信息收集清单',
     app_permissions_description: '应用权限说明',
     third_party_sdk_and_information_sharing_list: '第三方SDK及信息共享清单',
     terms_of_service: '用户协议',
+    membership_agreement: '会员协议',
     privacy_policy: '隐私政策',
-    version_number: '版本号',
     record_filing_number: '备案号',
     exchange_image_url: '交流二维码图片地址',
     tutorial_url: '教程链接',
     open_source_git_url: '开源地址(GitHub)',
     open_source_gitee_url: '开源地址(Gitee)'
   },
-  // 后台品牌图片：登录 Logo / 侧栏 Logo / 页签图标（专用 AdminBrandSection 渲染）
+  // 短信服务：通用策略 + 当前厂商专属参数
+  sms: {
+    enabled: '启用短信服务',
+    providerType: '短信渠道',
+    accessKeyId: 'AccessKey ID / SecretId',
+    accessKeySecret: 'AccessKey Secret / SecretKey',
+    endpoint: '云短信 API 端点',
+    signName: '短信签名',
+    sdkAppId: '腾讯云短信应用 ID',
+    defaultTemplateId: '验证码模板 ID',
+    codeParamName: '验证码参数名',
+    smsBaoUsername: '短信宝用户名',
+    smsBaoApiKey: '短信宝 API Key',
+    smsBaoProductId: '短信宝产品 ID（可选）',
+    smsBaoContentTemplate: '短信内容模板（含签名）',
+    code_length: '验证码长度（位）',
+    code_expire_minutes: '验证码有效期（分钟）',
+    send_interval_seconds: '同手机号/同IP最小发送间隔（秒）',
+    daily_limit: '同手机号/同IP每日发送上限'
+  },
+  // 后台品牌图片：平台 LOGO / 页签图标（专用 AdminBrandSection 渲染）
   admin_brand: {
-    login_logo_url: '登录页品牌Logo地址',
-    sidebar_logo_url: '后台左上角Logo地址',
+    platform_logo_url: '平台LOGO地址',
     favicon_url: '浏览器页签图标地址'
   },
   // 图片内容安全审查（image_moderation）：渲染走专用 ImageModerationSection 区块，
@@ -306,7 +328,8 @@ export const CONFIG_NAME_MAP: Record<string, string> = {
 export const SELECT_FIELD_OPTIONS: Record<string, Array<{ label: string; value: string }>> = {
   providerType: [
     { label: '阿里云', value: 'aliyun' },
-    { label: '腾讯云', value: 'tencent' }
+    { label: '腾讯云', value: 'tencent' },
+    { label: '短信宝', value: 'smsbao' }
   ],
   authType: [
     { label: '二要素(姓名+身份证)', value: 'twoFactor' },
@@ -346,14 +369,22 @@ export const PROVIDER_SPECIFIC_FIELDS: Record<string, { common: string[]; [key: 
     common: [
       'enabled',
       'providerType',
+      'code_length',
+      'code_expire_minutes',
+      'send_interval_seconds',
+      'daily_limit'
+    ],
+    aliyun: ['endpoint', 'accessKeyId', 'accessKeySecret', 'signName', 'defaultTemplateId', 'codeParamName'],
+    tencent: [
+      'endpoint',
       'accessKeyId',
       'accessKeySecret',
       'signName',
+      'sdkAppId',
       'defaultTemplateId',
       'codeParamName'
     ],
-    aliyun: ['endpoint'],
-    tencent: ['endpoint', 'sdkAppId']
+    smsbao: ['smsBaoUsername', 'smsBaoApiKey', 'smsBaoProductId', 'smsBaoContentTemplate']
   },
   // 文件存储：按"存储模式(uploadMode)"动态显示字段。
   // 公共字段（顶部）：所有模式共用的开关与限制项。
@@ -384,8 +415,31 @@ export const PROVIDER_FILTER_DRIVER: Record<string, { field: string; default: st
   oss: { field: 'uploadMode', default: 'oss' }
 };
 
-/** 纯数字但应作为文本的字段 */
-export const TEXT_NUMBER_FIELDS = ['defaultTemplateId', 'sdkAppId', 'appId', 'appCode'];
+/**
+ * 明确声明数值型配置，禁止根据当前值猜测类型。
+ *
+ * 账号、AppId、商户号、模板 ID 等业务标识即使全是数字，本质仍是字符串；
+ * 使用显式白名单可以保留前导零，也能保证空值配置仍渲染为正确的数值输入框。
+ */
+const NUMBER_FIELDS_BY_CATEGORY: Record<string, string[]> = {
+  admin_entry: ['rate_limit_per_min'],
+  api_crypto: ['gzip_threshold', 'max_plain_size', 'timestamp_window_ms'],
+  captcha: ['captcha_expire_seconds', 'token_expire_seconds'],
+  image_moderation: ['logRetentionDays'],
+  invite: ['rebate_max_per_order', 'rebate_ratio'],
+  login_policy: ['max_online_count'],
+  mail: ['port', 'code_length', 'code_expire_minutes', 'send_interval_seconds', 'daily_limit'],
+  media: ['ai_billing_global_multiplier', 'media_concurrent_limit_global', 'media_concurrent_limit_user'],
+  mps: ['creditRate', 'profitMultiplier'],
+  oss: ['maxBatchCount', 'maxFileSize'],
+  referenceAudio: ['maxDurationSeconds', 'maxPerProject', 'minDurationSeconds'],
+  register_bonus: ['amount'],
+  sms: ['code_length', 'code_expire_minutes', 'send_interval_seconds', 'daily_limit'],
+  system_upgrade: ['keep_backups'],
+  taskq: ['taskq_concurrent_limit_global', 'taskq_concurrent_limit_user'],
+  tencent_asr: ['maxAttempts', 'sentenceMaxLength', 'speakerDiarization', 'timeoutSeconds'],
+  voice: ['voice_preview_max_seconds']
+};
 
 /** agent_model 类特殊字段：值是 JSON 串，编辑时需要拆成 modelCode + defaultParams */
 export const AGENT_MODEL_JSON_FIELDS = [
@@ -432,11 +486,11 @@ export function isBooleanLike(v: any): boolean {
   return v === 'true' || v === 'false';
 }
 
-export function isNumberLike(v: any, name: string): boolean {
-  if (TEXT_NUMBER_FIELDS.includes(name)) return false;
-  if (v === '' || v === null || v === undefined) return false;
-  if (isJsonLike(v)) return false;
-  return !isNaN(Number(v)) && !String(v).includes('\n');
+export function isNumericField(category: string | undefined, name: string): boolean {
+  if (category === 'taskq' && /^taskq_concurrent_limit_user_\d+$/.test(name)) {
+    return true;
+  }
+  return Boolean(category && NUMBER_FIELDS_BY_CATEGORY[category]?.includes(name));
 }
 
 export function isLongText(v: any): boolean {

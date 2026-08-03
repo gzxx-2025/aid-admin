@@ -15,7 +15,7 @@ import {
   isBooleanLike,
   isJsonLike,
   isLongText,
-  isNumberLike,
+  isNumericField,
   isSensitive
 } from './maps';
 
@@ -24,7 +24,6 @@ interface Props {
   value: string;
   onChange: (v: string) => void;
   models?: any[];
-  agents?: any[];
   category?: string;
 }
 
@@ -40,7 +39,7 @@ function prettyJson(v: string): string {
 /**
  * 根据配置项名称 / 值智能选择合适的编辑控件
  */
-export default function ValueField({ name, value, onChange, models, agents, category }: Props) {
+export default function ValueField({ name, value, onChange, models, category }: Props) {
   const [showSecret, setShowSecret] = useState(false);
 
   // 0. 分类内专属控件（优先级最高）
@@ -63,15 +62,79 @@ export default function ValueField({ name, value, onChange, models, agents, cate
       />
     );
   }
-  // 0.1 captcha 背景图：走系统统一上传 /api/user/oss/upload（按 aid_config oss.uploadMode 动态分发 local/oss），
+  // 基础配置中的交流二维码统一走图片上传，上传成功后保存对象存储地址。
+  if (category === 'basic' && name === 'exchange_image_url') {
+    return (
+      <ImageUpload
+        value={value}
+        onChange={(v) => onChange(v)}
+        maxCount={1}
+        maxSize={5}
+        accept="image/*"
+      />
+    );
+  }
+  // SEO 关键词以逗号持久化，后台用标签逐个维护，支持回车、中文逗号和英文逗号分隔。
+  if (category === 'basic' && name === 'site_keywords') {
+    const keywords = value
+      ? value
+          .split(/[,，]/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : [];
+    return (
+      <Select
+        mode="tags"
+        value={keywords}
+        tokenSeparators={[',', '，']}
+        placeholder="输入关键词后按回车，例如 AI漫画"
+        maxTagCount="responsive"
+        style={{ width: '100%' }}
+        onChange={(items) =>
+          onChange(
+            Array.from(new Set((items as string[]).map((item) => item.trim()).filter(Boolean))).join(',')
+          )
+        }
+      />
+    );
+  }
+  if (category === 'basic' && name === 'site_description') {
+    return (
+      <Input.TextArea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={4}
+        maxLength={300}
+        showCount
+        placeholder="概括平台定位与核心能力，建议 80—160 个字"
+      />
+    );
+  }
+  // 短信宝由本平台维护完整短信内容，{code} 会在发送前替换为实际验证码。
+  if (category === 'sms' && name === 'smsBaoContentTemplate') {
+    return (
+      <div style={{ width: '100%' }}>
+        <Input.TextArea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          rows={3}
+          maxLength={300}
+          showCount
+          placeholder="例如：【视觉AID】您的验证码是{code}"
+        />
+        <div style={{ marginTop: 6, color: '#64748b', fontSize: 12 }}>
+          内容需包含 <code>{'{code}'}</code>，签名请直接写在模板开头。
+        </div>
+      </div>
+    );
+  }
+  // 0.1 captcha 背景图：走后台管理上传接口（按 aid_config oss.uploadMode 动态分发 local/oss），
   //     自动回填地址（本地模式回填 /profile/... ，OSS 模式回填远程 URL），逗号分隔多图
   if (category === 'captcha' && name === 'background_urls') {
     return (
       <ImageUpload
         value={value}
         onChange={(v) => onChange(v)}
-        action={(import.meta.env.VITE_APP_BASE_API || '') + '/api/user/oss/upload'}
-        name="files"
         maxCount={10}
         maxSize={5}
         accept="image/*"
@@ -205,7 +268,7 @@ export default function ValueField({ name, value, onChange, models, agents, cate
   }
 
   // 5. 数字
-  if (isNumberLike(value, name)) {
+  if (isNumericField(category, name)) {
     return (
       <InputNumber
         value={value === '' || value === null || value === undefined ? undefined : Number(value)}

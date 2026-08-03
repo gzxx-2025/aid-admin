@@ -5,6 +5,7 @@ import {
   ExperimentOutlined,
   FolderOpenOutlined,
   KeyOutlined,
+  LinkOutlined,
   ReloadOutlined,
   SaveOutlined,
   SettingOutlined,
@@ -24,7 +25,6 @@ import {
   testSmsSend
 } from '@/api/aidconfig/aidconfig';
 import { listModel as listAidmodel } from '@/api/aid/aimanage';
-import { listAgent } from '@/api/aid/agent';
 import TestConnectionButton from '@/components/TestConnectionButton';
 import type { ConfigTestKey } from '@/api/system/configTest';
 
@@ -61,6 +61,7 @@ import TencentAsrSection from './TencentAsrSection';
 import AdminEntrySection from './AdminEntrySection';
 import DefaultAvatarSection from './DefaultAvatarSection';
 import AdminBrandSection from './AdminBrandSection';
+import BasicConfigSection from './BasicConfigSection';
 import WechatNotifySection from './WechatNotifySection';
 import {
   CATEGORY_NAMES,
@@ -93,14 +94,42 @@ const ADMIN_ENTRY_CATEGORY = 'admin_entry';
 /** 默认头像分类：走专用 DefaultAvatarSection（管理员上传最多5张，注册随机选取） */
 const DEFAULT_AVATAR_CATEGORY = 'default_avatar';
 
-/** 后台品牌图片：走专用 AdminBrandSection（登录/侧栏 Logo + 页签图标上传） */
+/** 后台品牌图片：走专用 AdminBrandSection（平台 LOGO + 页签图标上传） */
 const ADMIN_BRAND_CATEGORY = 'admin_brand';
 
 /** 微信公众号推送分类：走专用 WechatNotifySection（模板 JSON 表单化维护） */
 const WECHAT_NOTIFY_CATEGORY = 'wx_notify';
 
+/** 基础配置分类：走分组化信息架构，但沿用页面统一保存流程。 */
+const BASIC_CATEGORY = 'basic';
+
+/** 数据库缺失时注入的必备基础配置项，保存后自动创建真实记录。 */
+const REQUIRED_BASIC_FIELDS = [
+  { id: -401, configName: 'site_name', configDict: '网站名称', orderNum: 1 },
+  { id: -402, configName: 'site_description', configDict: '网站描述', orderNum: 2 },
+  { id: -403, configName: 'site_keywords', configDict: '网站关键词', orderNum: 3 },
+  { id: -404, configName: 'membership_agreement', configDict: '会员协议', orderNum: 4 }
+];
+
+/** 数据库缺失时注入的短信宝配置项。 */
+const REQUIRED_SMS_BAO_FIELDS = [
+  { id: -411, configName: 'smsBaoUsername', configDict: '短信宝用户名', configValue: '', orderNum: 20 },
+  { id: -412, configName: 'smsBaoApiKey', configDict: '短信宝API Key', configValue: '', orderNum: 21 },
+  { id: -413, configName: 'smsBaoProductId', configDict: '短信宝产品ID', configValue: '', orderNum: 22 },
+  {
+    id: -414,
+    configName: 'smsBaoContentTemplate',
+    configDict: '短信内容模板（含签名）',
+    configValue: '【视觉AID】您的验证码是{code}',
+    orderNum: 23
+  }
+];
+
 /** 后台配置页隐藏的分类（不在左侧分区显示，也不走未收纳兜底）。 */
 const HIDDEN_CATEGORIES = new Set<string>(['realAuth', 'system_upgrade', 'official_gateway']);
+
+/** 已废弃的基础配置字段：兼容尚未执行清理脚本的已有数据库。 */
+const HIDDEN_BASIC_FIELDS = new Set<string>(['version_number']);
 
 interface ConfigItem {
   id: number;
@@ -110,6 +139,7 @@ interface ConfigItem {
   configDict?: string;
   category?: string;
   remark?: string;
+  orderNum?: number;
   _original: string;
   _modified: boolean;
 }
@@ -127,7 +157,6 @@ export default function AidconfigPage() {
   const [activeCategory, setActiveCategory] = useState<string>('');
   const [currentActiveConfig, setCurrentActiveConfig] = useState<Record<string, any>>({});
   const [models, setModels] = useState<any[]>([]);
-  const [agents, setAgents] = useState<any[]>([]);
   const [testing, setTesting] = useState(false);
   const [smsTestOpen, setSmsTestOpen] = useState(false);
   const [smsTestForm] = Form.useForm();
@@ -167,7 +196,7 @@ export default function AidconfigPage() {
     if (sections.length === 0) return;
     const ok = sections.some((s) => s.categories.includes(activeCategory));
     if (!ok) setActiveCategory(sections[0].categories[0]);
-  }, [sections]);
+  }, [sections, activeCategory]);
 
   const loadList = async () => {
     setLoading(true);
@@ -186,6 +215,7 @@ export default function AidconfigPage() {
       const visibleItems = items.filter(
         (it) =>
           !HIDDEN_CATEGORIES.has(it.category || '') &&
+          !(it.category === 'basic' && HIDDEN_BASIC_FIELDS.has(it.configName)) &&
           !(it.category === 'agent_model' && HIDDEN_AGENT_MODEL_FIELDS.has(it.configName))
       );
 
@@ -197,6 +227,37 @@ export default function AidconfigPage() {
       });
 
       const list = Object.values(grouped).sort((a, b) => a.category.localeCompare(b.category, 'zh-CN'));
+
+      /** 确保指定分类具备后台必须维护的字段，已有数据库未执行脚本时也可直接编辑。 */
+      const ensureFields = (
+        category: string,
+        definitions: Array<{
+          id: number;
+          configName: string;
+          configDict: string;
+          configValue?: string;
+          orderNum: number;
+        }>
+      ) => {
+        let group = list.find((item) => item.category === category);
+        if (!group) {
+          group = { category, items: [] };
+          list.push(group);
+        }
+        definitions.forEach((definition) => {
+          if (group!.items.some((item) => item.configName === definition.configName)) return;
+          group!.items.push({
+            ...definition,
+            category,
+            configValue: definition.configValue || '',
+            _original: definition.configValue || '',
+            _modified: false
+          } as ConfigItem);
+        });
+      };
+
+      ensureFields(BASIC_CATEGORY, REQUIRED_BASIC_FIELDS);
+      ensureFields('sms', REQUIRED_SMS_BAO_FIELDS);
       // 模型基础倍率是计费必填项。数据库尚未初始化时也提供可保存的页面占位项；说明固定写在页面，不落 configDict。
       let mediaGroup = list.find((g) => g.category === 'media');
       if (!mediaGroup) {
@@ -274,9 +335,9 @@ export default function AidconfigPage() {
             {
               id: -201,
               category: ADMIN_BRAND_CATEGORY,
-              configName: 'login_logo_url',
+              configName: 'platform_logo_url',
               configValue: '',
-              configDict: '登录页品牌Logo地址',
+              configDict: '平台LOGO地址',
               _original: '',
               _modified: false
             } as ConfigItem
@@ -300,13 +361,6 @@ export default function AidconfigPage() {
     listAidmodel({ pageNum: 1, pageSize: 1000 })
       .then((r: any) => setModels(r.rows || r.data || []))
       .catch(() => setModels([]));
-  }, []);
-
-  // 加载所有智能体（给 project_gen_config 双模式下拉用）
-  useEffect(() => {
-    listAgent({ pageNum: 1, pageSize: 1000 })
-      .then((r: any) => setAgents(r.rows || r.data || []))
-      .catch(() => setAgents([]));
   }, []);
 
   const loadCurrentActive = async (category: string) => {
@@ -339,6 +393,7 @@ export default function AidconfigPage() {
   const isDefaultAvatar = activeCategory === DEFAULT_AVATAR_CATEGORY;
   const isAdminBrand = activeCategory === ADMIN_BRAND_CATEGORY;
   const isWechatNotify = activeCategory === WECHAT_NOTIFY_CATEGORY;
+  const isBasic = activeCategory === BASIC_CATEGORY;
   /** 走专用区块（自带保存/操作）的分类：隐藏通用的保存/同步/测试/刷新头部按钮 */
   const isSpecialSection =
     isImageModeration ||
@@ -362,6 +417,12 @@ export default function AidconfigPage() {
     const byName = new Map(currentGroup.items.map((it) => [it.configName, it]));
     return allowed.map((n) => byName.get(n)).filter(Boolean) as ConfigItem[];
   }, [currentGroup, activeCategory]);
+
+  /** 当前短信厂商，用于展示厂商专属提示。 */
+  const currentSmsProvider =
+    activeCategory === 'sms'
+      ? currentGroup?.items.find((item) => item.configName === 'providerType')?.configValue || 'aliyun'
+      : '';
 
   // 整组项（含被隐藏的镜像字段，如 cdnDomain/cosCdnDomain），用于"已修改"统计与保存
   const groupItems = currentGroup?.items || [];
@@ -420,7 +481,7 @@ export default function AidconfigPage() {
                 configValue: it.configValue,
                 configDict: it.configDict,
                 delFlag: '0',
-                orderNum: 7
+                orderNum: it.orderNum || 7
               })
         )
       );
@@ -429,7 +490,11 @@ export default function AidconfigPage() {
       const hasCreated = dirty.some((it) => !(it.id && it.id > 0));
       if (hasCreated) {
         if (ok === dirty.length) {
-          message.success('保存成功，请点击"同步配置"使配置生效');
+          message.success(
+            SYNCABLE_CATEGORIES.includes(activeCategory)
+              ? '保存成功，请点击"同步配置"使配置生效'
+              : '保存成功，配置将在短暂缓存后生效'
+          );
         } else {
           message.warning(`成功保存 ${ok}/${dirty.length} 项`);
         }
@@ -450,7 +515,11 @@ export default function AidconfigPage() {
         }))
       );
       if (ok === dirty.length) {
-        message.success('保存成功，请点击"同步配置"使配置生效');
+        message.success(
+          SYNCABLE_CATEGORIES.includes(activeCategory)
+            ? '保存成功，请点击"同步配置"使配置生效'
+            : '保存成功，配置将在短暂缓存后生效'
+        );
       } else {
         message.warning(`成功保存 ${ok}/${dirty.length} 项`);
       }
@@ -639,7 +708,7 @@ export default function AidconfigPage() {
                 </Button>
               </>
             )}
-            {!isSpecialSection && (
+            {!isSpecialSection && SYNCABLE_CATEGORIES.includes(activeCategory) && (
               <Button size="small" icon={<SyncOutlined />} loading={syncing} onClick={syncConfig}>
                 同步配置
               </Button>
@@ -712,6 +781,17 @@ export default function AidconfigPage() {
         )}
 
         <div className="config-page__content">
+          {activeCategory === 'sms' && currentSmsProvider === 'smsbao' && (
+            <div className="config-page__provider-note">
+              <div>
+                <strong>短信宝 · 轻量 HTTP 短信通道</strong>
+                <span>签名与验证码文案由本平台维护，连接测试使用余额查询接口，不会发送短信。</span>
+              </div>
+              <a href="https://www.smsbao.com" target="_blank" rel="noreferrer">
+                <LinkOutlined /> smsbao.com
+              </a>
+            </div>
+          )}
           {isImageModeration ? (
             <ImageModerationSection />
           ) : isMediaProcess ? (
@@ -747,6 +827,8 @@ export default function AidconfigPage() {
             <div className="config-page__center">
               <Empty description="当前分类无可配置项" />
             </div>
+          ) : isBasic ? (
+            <BasicConfigSection items={filteredItems} onChange={handleChange} />
           ) : (
             <div className="config-page__form">
               {filteredItems.map((item) => {
@@ -770,7 +852,6 @@ export default function AidconfigPage() {
                         value={item.configValue ?? ''}
                         onChange={(v) => handleChange(item.id, v)}
                         models={models}
-                        agents={agents}
                         category={item.category}
                       />
                     </div>
@@ -810,7 +891,7 @@ export default function AidconfigPage() {
         destroyOnClose
       >
         <div style={{ color: '#64748b', fontSize: 12, marginBottom: 12 }}>
-          将使用当前 aid_config 里的"默认模板ID"和"验证码参数名"向目标手机号发送测试短信。
+          将使用当前已同步的短信渠道向目标手机号发送测试验证码；短信宝使用后台配置的内容模板。
         </div>
         <Form form={smsTestForm} layout="vertical">
           <Form.Item

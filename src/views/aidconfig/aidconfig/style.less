@@ -219,6 +219,44 @@
     }
   }
 
+  &__provider-note {
+    margin: 18px 24px 6px;
+    padding: 14px 16px;
+    border: 1px solid #dbeafe;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    color: #334155;
+
+    > div {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    strong {
+      color: #0f172a;
+      font-size: 14px;
+    }
+
+    span {
+      color: #64748b;
+      font-size: 12px;
+    }
+
+    a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      color: #2563eb;
+      font-weight: 600;
+    }
+  }
+
   &__content {
     flex: 1;
     overflow-y: auto;

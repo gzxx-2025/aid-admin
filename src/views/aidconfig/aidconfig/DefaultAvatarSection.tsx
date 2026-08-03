@@ -8,8 +8,6 @@ import ImageUpload from '@/components/ImageUpload';
 const CATEGORY = 'default_avatar';
 const KEY_URLS = 'urls';
 const MAX_COUNT = 5;
-/** 与系统统一 OSS 上传保持一致（按 aid_config oss.uploadMode 动态分发 local/oss/cos） */
-const UPLOAD_ACTION = (import.meta.env.VITE_APP_BASE_API || '') + '/api/user/oss/upload';
 
 interface CfgItem {
   id?: number;
@@ -107,8 +105,6 @@ export default function DefaultAvatarSection() {
         <ImageUpload
           value={urls}
           onChange={(v) => setUrls(v)}
-          action={UPLOAD_ACTION}
-          name="files"
           maxCount={MAX_COUNT}
           maxSize={5}
           accept="image/*"

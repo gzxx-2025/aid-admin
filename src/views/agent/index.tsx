@@ -56,9 +56,6 @@ import { listFuncconfig } from '@/api/aid/funcconfig';
 import Auth from '@/components/Auth';
 import ImageUpload from '@/components/ImageUpload';
 
-/** 智能体图标统一 OSS 上传入口（与系统默认头像上传保持一致，按 oss.uploadMode 动态分发） */
-const ICON_UPLOAD_ACTION = (import.meta.env.VITE_APP_BASE_API || '') + '/api/user/oss/upload';
-
 const STATUS_OPTIONS = [
   { label: '启用', value: 1 },
   { label: '停用', value: 0 }
@@ -1050,8 +1047,6 @@ export default function AgentPage() {
                   tooltip="上传后随智能体信息返回给 C 端展示；建议正方形图片"
                 >
                   <ImageUpload
-                    action={ICON_UPLOAD_ACTION}
-                    name="files"
                     maxCount={1}
                     maxSize={5}
                     accept="image/*"

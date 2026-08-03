@@ -4,14 +4,13 @@ import { PictureOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons
 
 import { listAidconfig, updateAidconfig, addAidconfig } from '@/api/aidconfig/aidconfig';
 import ImageUpload from '@/components/ImageUpload';
+import { useAdminBrandStore } from '@/store/useAdminBrandStore';
 
 const CATEGORY = 'admin_brand';
-const KEY_LOGIN = 'login_logo_url';
-const KEY_SIDEBAR = 'sidebar_logo_url';
+const KEY_PLATFORM_LOGO = 'platform_logo_url';
+const LEGACY_KEY_LOGIN = 'login_logo_url';
+const LEGACY_KEY_SIDEBAR = 'sidebar_logo_url';
 const KEY_FAVICON = 'favicon_url';
-
-/** 与系统统一 OSS 上传保持一致（按 aid_config oss.uploadMode 动态分发 local/oss/cos） */
-const UPLOAD_ACTION = (import.meta.env.VITE_APP_BASE_API || '') + '/api/user/oss/upload';
 
 interface CfgItem {
   id?: number;
@@ -20,14 +19,14 @@ interface CfgItem {
 }
 
 /**
- * 后台品牌图片配置：登录 Logo / 左上角 Logo / 浏览器页签图标。
- * 写入 aid_config(category=admin_brand)，上传走媒体中心统一 /api/user/oss/upload。
+ * 后台品牌图片配置：平台 LOGO / 浏览器页签图标。
+ * 写入 aid_config(category=admin_brand)，图片使用后台管理上传接口。
  */
 export default function AdminBrandSection() {
+  const refreshBrand = useAdminBrandStore((state) => state.load);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [loginLogo, setLoginLogo] = useState('');
-  const [sidebarLogo, setSidebarLogo] = useState('');
+  const [platformLogo, setPlatformLogo] = useState('');
   const [favicon, setFavicon] = useState('');
   const [items, setItems] = useState<Record<string, CfgItem>>({});
 
@@ -41,8 +40,13 @@ export default function AdminBrandSection() {
         map[r.configName] = { id: r.id, configName: r.configName, configValue: r.configValue || '' };
       });
       setItems(map);
-      setLoginLogo(map[KEY_LOGIN]?.configValue || '');
-      setSidebarLogo(map[KEY_SIDEBAR]?.configValue || '');
+      // 已有数据库未执行迁移时，优先沿用原登录页 Logo，其次沿用原左上角 Logo。
+      setPlatformLogo(
+        map[KEY_PLATFORM_LOGO]?.configValue ||
+          map[LEGACY_KEY_LOGIN]?.configValue ||
+          map[LEGACY_KEY_SIDEBAR]?.configValue ||
+          ''
+      );
       setFavicon(map[KEY_FAVICON]?.configValue || '');
     } finally {
       setLoading(false);
@@ -74,11 +78,11 @@ export default function AdminBrandSection() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await persist(KEY_LOGIN, loginLogo || '', '登录页品牌Logo地址', 1);
-      await persist(KEY_SIDEBAR, sidebarLogo || '', '后台左上角Logo地址', 2);
-      await persist(KEY_FAVICON, favicon || '', '浏览器页签图标地址', 3);
-      message.success('已保存，刷新页面后生效');
+      await persist(KEY_PLATFORM_LOGO, platformLogo || '', '平台LOGO地址', 1);
+      await persist(KEY_FAVICON, favicon || '', '浏览器页签图标地址', 2);
       await load();
+      await refreshBrand();
+      message.success('已保存并生效');
     } finally {
       setSaving(false);
     }
@@ -110,30 +114,15 @@ export default function AdminBrandSection() {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="配置登录页 Logo、后台左上角 Logo、浏览器页签图标"
-          description="图片走媒体中心统一上传。未配置时使用系统内置默认图；保存后刷新页面即可看到效果。"
+          message="配置平台 LOGO、浏览器页签图标"
+          description="平台 LOGO 同时用于管理端登录页和左上角，并与页签图标一起提供给 C 端。未配置时管理端使用系统内置默认图。"
         />
 
         <div style={{ marginBottom: 24 }}>
-          <div style={{ marginBottom: 8, color: 'rgba(0,0,0,0.65)', fontWeight: 500 }}>登录页 Logo</div>
+          <div style={{ marginBottom: 8, color: 'rgba(0,0,0,0.65)', fontWeight: 500 }}>平台 LOGO</div>
           <ImageUpload
-            value={loginLogo}
-            onChange={(v) => setLoginLogo(v)}
-            action={UPLOAD_ACTION}
-            name="files"
-            maxCount={1}
-            maxSize={5}
-            accept="image/*"
-          />
-        </div>
-
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ marginBottom: 8, color: 'rgba(0,0,0,0.65)', fontWeight: 500 }}>左上角 Logo</div>
-          <ImageUpload
-            value={sidebarLogo}
-            onChange={(v) => setSidebarLogo(v)}
-            action={UPLOAD_ACTION}
-            name="files"
+            value={platformLogo}
+            onChange={(v) => setPlatformLogo(v)}
             maxCount={1}
             maxSize={5}
             accept="image/*"
@@ -145,8 +134,6 @@ export default function AdminBrandSection() {
           <ImageUpload
             value={favicon}
             onChange={(v) => setFavicon(v)}
-            action={UPLOAD_ACTION}
-            name="files"
             maxCount={1}
             maxSize={2}
             accept="image/*,.ico"

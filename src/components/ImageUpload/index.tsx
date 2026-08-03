@@ -19,7 +19,7 @@ interface Props {
   parseResponse?: (resp: any) => string | undefined;
 }
 
-const DEFAULT_ACTION = import.meta.env.VITE_APP_BASE_API + '/common/upload';
+const DEFAULT_ACTION = `${import.meta.env.VITE_APP_BASE_API || ''}/common/upload`;
 
 /** 默认解析：兼容 {url} / {fileName} 结构，以及统一OSS上传的 {data:[{url}]} 结构 */
 function defaultParse(resp: any): string | undefined {
@@ -113,10 +113,15 @@ export default function ImageUpload({
       }
       // 业务失败提示：上传接口 HTTP 200 但业务 code 非 200（类型不允许、超业务大小等），antd 会当作成功，
       // 这里把后端 msg 透出，避免"看似上传成功但表单里没有值"的困惑
-      if (file.status === 'done' && typeof file.response?.code === 'number' && file.response.code !== 200) {
+      const businessFailed =
+        file.status === 'done' && typeof file.response?.code === 'number' && file.response.code !== 200;
+      if (businessFailed) {
         message.error(file.response.msg || `${file.name} 上传失败`);
       }
-      const next = list.slice(-maxCount);
+      // HTTP 200 不代表业务成功。把失败文件标成 error，避免错误缩略图伪装成已上传资源。
+      const next = list
+        .map((item) => (item.uid === file.uid && businessFailed ? { ...item, status: 'error' as const } : item))
+        .slice(-maxCount);
       setFileList(next);
       const done = next.filter((f) => f.status === 'done');
       const parse = parseResponse || defaultParse;

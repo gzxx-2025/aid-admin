@@ -27,9 +27,6 @@ const STATUS_OPTIONS = [
   { label: '隐藏', value: '1' }
 ];
 
-/** OSS 统一上传地址（按系统配置自动分发 local / oss / cos） */
-const OSS_UPLOAD_ACTION = (import.meta.env.VITE_APP_BASE_API || '') + '/api/user/oss/upload';
-
 function labelOf(options: Array<{ label: string; value: any }>, value: any) {
   return options.find((o) => o.value === value)?.label ?? value;
 }
@@ -124,14 +121,14 @@ export default function HomebannerPage() {
       {
         name: 'resourceUrl', label: '资源（图片/视频/动图）', span: 24, required: true, type: 'custom',
         render: () => (
-          <ImageUpload action={OSS_UPLOAD_ACTION} name="files" maxCount={1} maxSize={20} accept="image/*,video/*" />
+          <ImageUpload maxCount={1} maxSize={20} accept="image/*,video/*" />
         ),
         viewRender: (v: any, row: any) => <BannerResourceCell value={v} bannerType={row?.bannerType} cover={row?.coverUrl} large />
       },
       {
         name: 'coverUrl', label: '封面（视频/动图海报）', span: 24, type: 'custom',
         render: () => (
-          <ImageUpload action={OSS_UPLOAD_ACTION} name="files" maxCount={1} maxSize={20} accept="image/*" />
+          <ImageUpload maxCount={1} maxSize={20} accept="image/*" />
         ),
         viewRender: (v: any) => <BannerResourceCell value={v} bannerType="image" large />
       },

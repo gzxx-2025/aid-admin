@@ -33,9 +33,6 @@ const STATUS_OPTIONS = [
   { label: '隐藏', value: '1' }
 ];
 
-/** OSS 统一上传地址（按系统配置自动分发 local / oss / cos） */
-const OSS_UPLOAD_ACTION = (import.meta.env.VITE_APP_BASE_API || '') + '/api/user/oss/upload';
-
 function labelOf(options: Array<{ label: string; value: any }>, value: any) {
   return options.find((o) => o.value === value)?.label ?? value;
 }
@@ -138,14 +135,14 @@ export default function NoticePage() {
       {
         name: 'imageUrl', label: '图片（视频公告时作为封面）', span: 12, type: 'custom',
         render: () => (
-          <ImageUpload action={OSS_UPLOAD_ACTION} name="files" maxCount={1} maxSize={20} accept="image/*" />
+          <ImageUpload maxCount={1} maxSize={20} accept="image/*" />
         ),
         viewRender: (v: any) => <NoticeMediaCell image={v} large />
       },
       {
         name: 'videoUrl', label: '视频（仅视频公告需上传）', span: 12, type: 'custom',
         render: () => (
-          <ImageUpload action={OSS_UPLOAD_ACTION} name="files" maxCount={1} maxSize={100} accept="video/*" />
+          <ImageUpload maxCount={1} maxSize={100} accept="video/*" />
         ),
         viewRender: (v: any, row: any) => (v ? <NoticeMediaCell image={row?.imageUrl} video={v} isVideo large /> : <span style={{ color: '#94a3b8' }}>-</span>),
         // 选择「视频公告」时必须上传视频
