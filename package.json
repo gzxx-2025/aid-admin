@@ -4,6 +4,7 @@
   "private": true,
   "description": "AID Manager - React + Ant Design 后台管理系统",
   "type": "module",
+  "packageManager": "npm@10.9.4",
   "scripts": {
     "dev": "vite --mode development",
     "build": "vite build --mode production",
@@ -55,6 +56,6 @@
     "vite-plugin-svg-icons": "^2.0.1"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13.0"
   }
 }

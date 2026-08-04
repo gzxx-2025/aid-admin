@@ -18,16 +18,15 @@ interface CfgItem {
   configValue: string;
 }
 
-/** 生成 8 位（大小写字母 + 数字）随机访问码 */
+/** 生成 12 位（大小写字母 + 数字）随机访问码 */
 function genCode(): string {
-  let s = '';
-  const arr = new Uint32Array(8);
-  if (window.crypto?.getRandomValues) {
-    window.crypto.getRandomValues(arr);
-    for (let i = 0; i < 8; i++) s += CODE_CHARS[arr[i] % CODE_CHARS.length];
-  } else {
-    for (let i = 0; i < 8; i++) s += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+  if (!window.crypto?.getRandomValues) {
+    throw new Error('当前浏览器不支持安全随机数');
   }
+  let s = '';
+  const arr = new Uint32Array(12);
+  window.crypto.getRandomValues(arr);
+  for (let i = 0; i < arr.length; i++) s += CODE_CHARS[arr[i] % CODE_CHARS.length];
   return s;
 }
 
@@ -82,13 +81,13 @@ export default function AdminEntrySection() {
 
   const handleSave = async () => {
     if (enabled && (!code || code.length < 8)) {
-      message.warning('启用前请先生成访问码（8位）');
+      message.warning('启用前请先生成访问码（至少8位）');
       return;
     }
     setSaving(true);
     try {
       await persist(KEY_ENABLED, enabled ? 'true' : 'false', '是否启用随机登录入口(true/false)', 1);
-      await persist(KEY_CODE, code || '', '后台登录访问码(8位大小写字母+数字)', 2);
+      await persist(KEY_CODE, code || '', '后台登录访问码(至少8位大小写字母+数字)', 2);
       await persist(KEY_RATE, String(rateLimit ?? 10), '单IP每分钟尝试次数(<=0不限流)', 3);
       message.success('已保存，登录入口实时生效（无需重启）');
       await load();
@@ -98,8 +97,12 @@ export default function AdminEntrySection() {
   };
 
   const handleGenerate = () => {
-    setCode(genCode());
-    message.info('已生成新访问码，记得点击「保存」生效');
+    try {
+      setCode(genCode());
+      message.info('已生成新访问码，记得点击「保存」生效');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '生成访问码失败');
+    }
   };
 
   const handleCopy = async (text: string) => {
@@ -144,7 +147,7 @@ export default function AdminEntrySection() {
           <Input
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 32))}
-            placeholder="点击右侧生成 8 位随机码"
+            placeholder="点击右侧生成 12 位随机码"
             style={{ width: 260, fontFamily: 'Consolas, Menlo, monospace', letterSpacing: 1 }}
             maxLength={32}
           />

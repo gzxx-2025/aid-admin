@@ -67,6 +67,7 @@ export interface DeploymentConfigSaveParams {
   tokenSecret?: string;
   javaOpts?: string;
   dependencyInstallMode?: string;
+  dependencyRegion?: string;
   composeProfiles?: string;
   rocketmqEnabled?: string;
   rocketmqNameserver?: string;

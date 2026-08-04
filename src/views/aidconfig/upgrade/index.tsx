@@ -96,6 +96,7 @@ const deploymentToForm = (config: DeploymentConfig): DeploymentConfigSaveParams 
     clearRedisPassword: false,
     javaOpts: value.JAVA_OPTS,
     dependencyInstallMode: value.DEPENDENCY_INSTALL_MODE || 'auto',
+    dependencyRegion: value.DEPENDENCY_REGION || 'auto',
     composeProfiles: value.COMPOSE_PROFILES,
     rocketmqEnabled: value.ROCKETMQ_ENABLED,
     rocketmqNameserver: value.ROCKETMQ_NAMESERVER,
@@ -821,20 +822,39 @@ export default function UpgradeConfigPage() {
             <Col xs={24} md={8}><Form.Item name="backendPort" label="后端端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
           </Row>
 
-          <Form.Item
-            name="dependencyInstallMode"
-            label="依赖处理方式"
-            extra={deploymentConfig?.mode === 'docker'
-              ? '自动模式会拉取缺失镜像，已有镜像直接跳过；Docker Engine 必须由管理员预先安装。'
-              : '自动模式会用系统包管理器安装缺失的安全依赖；外部 MySQL、Redis、RocketMQ 不会被安装或覆盖。'}
-          >
-            <Select
-              options={[
-                { label: '自动安装或拉取（推荐）', value: 'auto' },
-                { label: '仅检查并提示', value: 'manual' }
-              ]}
-            />
-          </Form.Item>
+          <Row gutter={20}>
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="dependencyInstallMode"
+                label="依赖处理方式"
+                extra={deploymentConfig?.mode === 'docker'
+                  ? '自动模式会拉取缺失镜像，已有且摘要匹配的镜像直接跳过；Docker Engine 必须预先安装。'
+                  : '自动模式下载固定版本工具链；系统服务仍由发行版包管理器安装。'}
+              >
+                <Select
+                  options={[
+                    { label: '自动安装或拉取（推荐）', value: 'auto' },
+                    { label: '仅检查并提示', value: 'manual' }
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="dependencyRegion"
+                label="依赖下载线路"
+                extra="自动按服务器公网出口判断；首选源失败会切换另一条线路。"
+              >
+                <Select
+                  options={[
+                    { label: '自动判断（推荐）', value: 'auto' },
+                    { label: '国内镜像优先', value: 'cn' },
+                    { label: '官方地址优先', value: 'global' }
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Row gutter={20}>
             <Col xs={24} md={12}>
