@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Col,
   Collapse,
   Descriptions,
@@ -80,7 +81,7 @@ const deploymentToForm = (config: DeploymentConfig): DeploymentConfigSaveParams 
     httpPort: value.HTTP_PORT,
     adminPort: value.ADMIN_PORT,
     backendPort: value.BACKEND_PORT,
-    dataRoot: value.DATA_ROOT,
+    dataRoot: value.DATA_ROOT || config.allowedConfigRoot.replace(/[\\/]config[\\/]?$/, ''),
     mysqlPort: value.MYSQL_PORT,
     dbHost: value.DB_HOST,
     dbPort: value.DB_PORT,
@@ -88,10 +89,23 @@ const deploymentToForm = (config: DeploymentConfig): DeploymentConfigSaveParams 
     dbUsername: value.DB_USERNAME,
     redisHost: value.REDIS_HOST,
     redisPort: value.REDIS_PORT,
+    redisUsername: value.REDIS_USERNAME,
+    redisDatabase: value.REDIS_DATABASE,
+    redisPassword: undefined,
+    clearRedisPassword: false,
     javaOpts: value.JAVA_OPTS,
     composeProfiles: value.COMPOSE_PROFILES,
     rocketmqEnabled: value.ROCKETMQ_ENABLED,
     rocketmqNameserver: value.ROCKETMQ_NAMESERVER,
+    rocketmqAccessKey: undefined,
+    rocketmqSecretKey: undefined,
+    clearRocketmqCredentials: false,
+    httpsEnabled: value.HTTPS_ENABLED || 'false',
+    httpsPort: value.HTTPS_PORT,
+    httpsPublicDomain: value.HTTPS_PUBLIC_DOMAIN,
+    httpsAdminDomain: value.HTTPS_ADMIN_DOMAIN,
+    httpsCertPath: value.HTTPS_CERT_PATH,
+    httpsKeyPath: value.HTTPS_KEY_PATH,
     mysqlBufferPool: value.MYSQL_BUFFER_POOL,
     mysqlMaxConnections: value.MYSQL_MAX_CONNECTIONS,
     redisMaxmemory: value.REDIS_MAXMEMORY,
@@ -141,6 +155,9 @@ export default function UpgradeConfigPage() {
   const pollingTaskSeen = useRef(false);
   const [sourceForm] = Form.useForm<UpgradeSourceSetting>();
   const [deploymentForm] = Form.useForm<DeploymentConfigSaveParams>();
+  const composeProfiles = Form.useWatch('composeProfiles', deploymentForm) || '';
+  const usesInternalMysql = deploymentConfig?.mode === 'docker'
+    && composeProfiles.split(',').some((item) => item.trim() === 'mysql');
 
   const updater = status?.updater;
   const updaterTag = UPDATER_TAG[updater?.status || 'UNKNOWN'] || UPDATER_TAG.UNKNOWN;
@@ -799,54 +816,107 @@ export default function UpgradeConfigPage() {
             <Col xs={24} md={8}><Form.Item name="backendPort" label="后端端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
           </Row>
 
-          {deploymentConfig?.mode === 'docker' && (
-            <Row gutter={20}>
-              <Col xs={24} md={12}>
-                <Form.Item name="dataRoot" label="数据根目录" extra="运行后禁止直接迁移；如需迁移应先停机并整体搬迁数据。">
-                  <Input disabled />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={12}><Form.Item name="mysqlPort" label="MySQL宿主机端口"><Input /></Form.Item></Col>
-            </Row>
-          )}
-
           <Row gutter={20}>
-            {deploymentConfig?.mode === 'systemd' && (
-              <>
-                <Col xs={24} md={8}><Form.Item name="dbHost" label="数据库地址" rules={[{ required: true }]}><Input /></Form.Item></Col>
-                <Col xs={24} md={8}><Form.Item name="dbPort" label="数据库端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
-              </>
-            )}
-            <Col xs={24} md={8}><Form.Item name="dbName" label="数据库名称" rules={[{ required: true }]}><Input disabled={deploymentConfig?.mode === 'docker'} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="dbUsername" label="数据库账号" rules={[{ required: true }]}><Input disabled={deploymentConfig?.mode === 'docker'} /></Form.Item></Col>
-            {deploymentConfig?.mode === 'systemd' && (
-              <Col xs={24} md={8}>
-                <Form.Item name="dbPassword" label="数据库密码">
-                  <Input.Password autoComplete="new-password" placeholder={deploymentConfig.configuredSecrets.includes('DB_PASSWORD') ? '已配置，留空保持不变' : '请输入数据库密码'} />
+            <Col xs={24} md={12}>
+              <Form.Item name="dataRoot" label="数据根目录" extra="运行后禁止直接迁移；证书目录也受此路径约束。">
+                <Input disabled />
+              </Form.Item>
+            </Col>
+            {deploymentConfig?.mode === 'docker' && (
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="composeProfiles"
+                  label="Docker 组件 Profiles"
+                  extra="可选 mysql、redis、mq、https。移除 mysql 即使用外部 MySQL，内置数据库容器不会启动。"
+                >
+                  <Input placeholder="mysql,redis" />
                 </Form.Item>
               </Col>
             )}
           </Row>
 
+          <Alert
+            type="info"
+            showIcon
+            message={deploymentConfig?.mode === 'docker' ? 'Docker 内置 HTTPS' : 'Nginx HTTPS'}
+            description={deploymentConfig?.mode === 'docker'
+              ? '在 Compose Profiles 中加入 https 后生效。'
+              : '选择启用后，重启服务会重新生成并校验 Nginx 站点配置。'}
+            className="upgrade-page__modal-alert"
+          />
+          {deploymentConfig?.mode === 'systemd' && (
+            <Form.Item name="httpsEnabled" label="启用 HTTPS">
+              <Radio.Group options={[{ label: '关闭', value: 'false' }, { label: '启用', value: 'true' }]} />
+            </Form.Item>
+          )}
+          <Row gutter={20}>
+            <Col xs={24} md={8}><Form.Item name="httpsPort" label="HTTPS端口"><Input placeholder="443" /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="httpsPublicDomain" label="用户端HTTPS域名"><Input placeholder="www.example.com" /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="httpsAdminDomain" label="管理端HTTPS域名"><Input placeholder="admin.example.com" /></Form.Item></Col>
+            <Col xs={24} md={12}><Form.Item name="httpsCertPath" label="完整证书路径" extra="必须位于 DATA_ROOT/config/ssl，禁止软链接。"><Input /></Form.Item></Col>
+            <Col xs={24} md={12}><Form.Item name="httpsKeyPath" label="证书私钥路径" extra="必须位于 DATA_ROOT/config/ssl，禁止软链接。"><Input /></Form.Item></Col>
+          </Row>
+
           {deploymentConfig?.mode === 'docker' && (
             <Alert
-              type="warning"
+              type={usesInternalMysql ? 'warning' : 'info'}
               showIcon
-              message="Docker内置MySQL密码和库名不能在运行后直接修改"
-              description="修改 .env 不会同步修改已有MySQL账号，必须使用专用数据库迁移或密码轮换流程。"
+              message={usesInternalMysql ? '当前使用内置 MySQL 5.7' : '当前使用外部 MySQL 5.7'}
+              description={usesInternalMysql
+                ? '数据库地址固定为 mysql:3306；已有容器的库名和账号密码不能通过修改配置直接轮换。'
+                : '保存前会校验外部数据库连接与版本；验证成功后不会启动 aid-mysql，旧容器会被移除但数据目录保留。Docker 宿主机数据库可填写 host.docker.internal。'}
               className="upgrade-page__modal-alert"
             />
           )}
+          <Row gutter={20}>
+            <Col xs={24} md={8}>
+              <Form.Item name="dbHost" label="数据库地址" rules={[{ required: true }]}>
+                <Input disabled={Boolean(usesInternalMysql)} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="dbPort" label="数据库端口" rules={[{ required: true }]}>
+                <Input disabled={Boolean(usesInternalMysql)} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}><Form.Item name="dbName" label="数据库名称" rules={[{ required: true }]}><Input disabled={Boolean(usesInternalMysql)} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="dbUsername" label="数据库账号" rules={[{ required: true }]}><Input disabled={Boolean(usesInternalMysql)} /></Form.Item></Col>
+            {!usesInternalMysql && (
+              <Col xs={24} md={8}>
+                <Form.Item name="dbPassword" label="数据库密码">
+                  <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('DB_PASSWORD') ? '已配置，留空保持不变' : '请输入数据库密码'} />
+                </Form.Item>
+              </Col>
+            )}
+          </Row>
+
+          {usesInternalMysql && (
+            <Row gutter={20}>
+              <Col xs={24} md={12}>
+                <Form.Item name="mysqlPort" label="内置 MySQL 宿主机端口"><Input /></Form.Item>
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Item name="mysqlRootPassword" label="内置 MySQL root 密码" extra="留空保持当前密钥；仅用于升级器备份、恢复与增量 SQL。">
+                  <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('MYSQL_ROOT_PASSWORD') ? '已配置，留空保持不变' : '首次启用内置 MySQL 时必须填写'} />
+                </Form.Item>
+              </Col>
+            </Row>
+          )}
 
           <Row gutter={20}>
-            <Col xs={24} md={8}><Form.Item name="redisHost" label="Redis地址" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="redisPort" label="Redis端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={24} md={8}>
+            <Col xs={24} md={6}><Form.Item name="redisHost" label="Redis地址" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col xs={24} md={4}><Form.Item name="redisPort" label="Redis端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col xs={24} md={5}><Form.Item name="redisUsername" label="Redis ACL用户名"><Input placeholder="传统模式留空" /></Form.Item></Col>
+            <Col xs={24} md={4}><Form.Item name="redisDatabase" label="Redis库"><Input placeholder="0" /></Form.Item></Col>
+            <Col xs={24} md={5}>
               <Form.Item name="redisPassword" label="Redis密码">
                 <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('REDIS_PASSWORD') ? '已配置，留空保持不变' : '无密码可留空'} />
               </Form.Item>
             </Col>
           </Row>
+          <Form.Item name="clearRedisPassword" valuePropName="checked">
+            <Checkbox>清空当前 Redis 密码（仅用于外部 Redis 确认无密码认证时）</Checkbox>
+          </Form.Item>
 
           <Row gutter={20}>
             <Col xs={24} md={12}>
@@ -864,7 +934,20 @@ export default function UpgradeConfigPage() {
               </Form.Item>
             </Col>
             <Col xs={24} md={16}><Form.Item name="rocketmqNameserver" label="RocketMQ NameServer"><Input /></Form.Item></Col>
+            <Col xs={24} md={12}>
+              <Form.Item name="rocketmqAccessKey" label="RocketMQ AccessKey">
+                <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('ROCKETMQ_ACCESS_KEY') ? '已配置，留空保持不变' : '未启用ACL可留空'} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item name="rocketmqSecretKey" label="RocketMQ SecretKey">
+                <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('ROCKETMQ_SECRET_KEY') ? '已配置，留空保持不变' : '未启用ACL可留空'} />
+              </Form.Item>
+            </Col>
           </Row>
+          <Form.Item name="clearRocketmqCredentials" valuePropName="checked">
+            <Checkbox>清空当前 RocketMQ ACL 凭证（AccessKey 与 SecretKey 同时清空）</Checkbox>
+          </Form.Item>
 
           {deploymentConfig?.mode === 'docker' && (
             <Collapse
@@ -874,7 +957,6 @@ export default function UpgradeConfigPage() {
                 label: 'Docker组件与资源调优',
                 children: (
                   <>
-                    <Form.Item name="composeProfiles" label="Compose Profiles" extra="默认 redis；启用内置MQ时使用 redis,mq。"><Input /></Form.Item>
                     <Row gutter={20}>
                       <Col xs={24} md={12}><Form.Item name="mysqlBufferPool" label="MySQL缓冲池"><Input placeholder="2G" /></Form.Item></Col>
                       <Col xs={24} md={12}><Form.Item name="mysqlMaxConnections" label="MySQL最大连接数"><Input placeholder="500" /></Form.Item></Col>
