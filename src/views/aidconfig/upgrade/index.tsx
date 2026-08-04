@@ -13,6 +13,7 @@ import {
   Modal,
   Radio,
   Row,
+  Select,
   Space,
   Spin,
   Tabs,
@@ -94,9 +95,11 @@ const deploymentToForm = (config: DeploymentConfig): DeploymentConfigSaveParams 
     redisPassword: undefined,
     clearRedisPassword: false,
     javaOpts: value.JAVA_OPTS,
+    dependencyInstallMode: value.DEPENDENCY_INSTALL_MODE || 'auto',
     composeProfiles: value.COMPOSE_PROFILES,
     rocketmqEnabled: value.ROCKETMQ_ENABLED,
     rocketmqNameserver: value.ROCKETMQ_NAMESERVER,
+    rocketmqFlushDiskType: value.ROCKETMQ_FLUSH_DISK_TYPE || 'ASYNC_FLUSH',
     rocketmqAccessKey: undefined,
     rocketmqSecretKey: undefined,
     clearRocketmqCredentials: false,
@@ -158,6 +161,8 @@ export default function UpgradeConfigPage() {
   const composeProfiles = Form.useWatch('composeProfiles', deploymentForm) || '';
   const usesInternalMysql = deploymentConfig?.mode === 'docker'
     && composeProfiles.split(',').some((item) => item.trim() === 'mysql');
+  const usesInternalRocketmq = deploymentConfig?.mode === 'docker'
+    && composeProfiles.split(',').some((item) => item.trim() === 'mq');
 
   const updater = status?.updater;
   const updaterTag = UPDATER_TAG[updater?.status || 'UNKNOWN'] || UPDATER_TAG.UNKNOWN;
@@ -816,6 +821,21 @@ export default function UpgradeConfigPage() {
             <Col xs={24} md={8}><Form.Item name="backendPort" label="后端端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
           </Row>
 
+          <Form.Item
+            name="dependencyInstallMode"
+            label="依赖处理方式"
+            extra={deploymentConfig?.mode === 'docker'
+              ? '自动模式会拉取缺失镜像，已有镜像直接跳过；Docker Engine 必须由管理员预先安装。'
+              : '自动模式会用系统包管理器安装缺失的安全依赖；外部 MySQL、Redis、RocketMQ 不会被安装或覆盖。'}
+          >
+            <Select
+              options={[
+                { label: '自动安装或拉取（推荐）', value: 'auto' },
+                { label: '仅检查并提示', value: 'manual' }
+              ]}
+            />
+          </Form.Item>
+
           <Row gutter={20}>
             <Col xs={24} md={12}>
               <Form.Item name="dataRoot" label="数据根目录" extra="运行后禁止直接迁移；证书目录也受此路径约束。">
@@ -934,6 +954,20 @@ export default function UpgradeConfigPage() {
               </Form.Item>
             </Col>
             <Col xs={24} md={16}><Form.Item name="rocketmqNameserver" label="RocketMQ NameServer"><Input /></Form.Item></Col>
+            {usesInternalRocketmq && (
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="rocketmqFlushDiskType"
+                  label="RocketMQ Broker刷盘"
+                  extra="异步刷盘性能优先，同步刷盘持久性优先。业务投递始终等待Broker确认。"
+                >
+                  <Select options={[
+                    { label: '异步刷盘（推荐）', value: 'ASYNC_FLUSH' },
+                    { label: '同步刷盘', value: 'SYNC_FLUSH' }
+                  ]} />
+                </Form.Item>
+              </Col>
+            )}
             <Col xs={24} md={12}>
               <Form.Item name="rocketmqAccessKey" label="RocketMQ AccessKey">
                 <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('ROCKETMQ_ACCESS_KEY') ? '已配置，留空保持不变' : '未启用ACL可留空'} />

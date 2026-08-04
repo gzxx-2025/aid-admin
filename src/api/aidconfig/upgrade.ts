@@ -66,9 +66,11 @@ export interface DeploymentConfigSaveParams {
   redisDatabase?: string;
   tokenSecret?: string;
   javaOpts?: string;
+  dependencyInstallMode?: string;
   composeProfiles?: string;
   rocketmqEnabled?: string;
   rocketmqNameserver?: string;
+  rocketmqFlushDiskType?: string;
   rocketmqAccessKey?: string;
   rocketmqSecretKey?: string;
   clearRocketmqCredentials?: boolean;
