@@ -97,6 +97,7 @@ const deploymentToForm = (config: DeploymentConfig): DeploymentConfigSaveParams 
     javaOpts: value.JAVA_OPTS,
     dependencyInstallMode: value.DEPENDENCY_INSTALL_MODE || 'auto',
     dependencyRegion: value.DEPENDENCY_REGION || 'auto',
+    dockerMirrors: value.DOCKER_MIRRORS || 'docker.m.daocloud.io,dockerproxy.net',
     composeProfiles: value.COMPOSE_PROFILES,
     rocketmqEnabled: value.ROCKETMQ_ENABLED,
     rocketmqNameserver: value.ROCKETMQ_NAMESERVER,
@@ -821,6 +822,15 @@ export default function UpgradeConfigPage() {
             <Col xs={24} md={8}><Form.Item name="adminPort" label="后台管理端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
             <Col xs={24} md={8}><Form.Item name="backendPort" label="后端端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
           </Row>
+
+          <Form.Item
+            name="dockerMirrors"
+            label="Docker 国内镜像候选"
+            extra="多个 Registry 前缀用英文逗号分隔。部署器会先测速排序，再按顺序实际拉取；某个来源失败会自动尝试下一个，并校验官方镜像摘要。可填写云厂商分配的专属加速域名，请勿填写账号、密码或查询参数。"
+            rules={[{ max: 1024, message: '镜像候选内容不能超过 1024 个字符' }]}
+          >
+            <Input placeholder="docker.m.daocloud.io,dockerproxy.net" />
+          </Form.Item>
 
           <Row gutter={20}>
             <Col xs={24} md={12}>

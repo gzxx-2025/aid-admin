@@ -68,6 +68,7 @@ export interface DeploymentConfigSaveParams {
   javaOpts?: string;
   dependencyInstallMode?: string;
   dependencyRegion?: string;
+  dockerMirrors?: string;
   composeProfiles?: string;
   rocketmqEnabled?: string;
   rocketmqNameserver?: string;
