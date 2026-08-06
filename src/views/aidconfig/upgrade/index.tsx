@@ -26,6 +26,7 @@ import {
   CloudDownloadOutlined,
   ControlOutlined,
   DatabaseOutlined,
+  DownOutlined,
   DownloadOutlined,
   ExclamationCircleOutlined,
   FileTextOutlined,
@@ -34,7 +35,8 @@ import {
   RocketOutlined,
   SaveOutlined,
   SettingOutlined,
-  SyncOutlined
+  SyncOutlined,
+  UpOutlined
 } from '@ant-design/icons';
 
 import {
@@ -134,6 +136,74 @@ const taskKey = (task?: {
   finishedAt?: string;
 }) => [task?.taskId, task?.action, task?.state, task?.finishedAt].filter(Boolean).join('|');
 
+const renderInlineReleaseText = (text: string, keyPrefix: string): React.ReactNode[] => {
+  const parts = text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/g).filter(Boolean);
+  return parts.map((part, index) => {
+    const key = `${keyPrefix}-${index}`;
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return <Text code key={key}>{part.slice(1, -1)}</Text>;
+    }
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <Text strong key={key}>{part.slice(2, -2)}</Text>;
+    }
+    return <React.Fragment key={key}>{part}</React.Fragment>;
+  });
+};
+
+const renderReleaseNotes = (markdown: string): React.ReactNode[] => {
+  const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
+  const nodes: React.ReactNode[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index].trim();
+    if (!line) {
+      index += 1;
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      const level = heading[1].length;
+      const HeadingTag = (`h${Math.min(level + 2, 6)}`) as keyof React.JSX.IntrinsicElements;
+      nodes.push(
+        <HeadingTag className={`upgrade-page__release-heading upgrade-page__release-heading--${level}`} key={`heading-${index}`}>
+          {renderInlineReleaseText(heading[2], `heading-${index}`)}
+        </HeadingTag>
+      );
+      index += 1;
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(line)) {
+      const items: React.ReactNode[] = [];
+      while (index < lines.length) {
+        const item = lines[index].trim().match(/^[-*]\s+(.+)$/);
+        if (!item) break;
+        items.push(<li key={`item-${index}`}>{renderInlineReleaseText(item[1], `item-${index}`)}</li>);
+        index += 1;
+      }
+      nodes.push(<ul className="upgrade-page__release-list" key={`list-${index}`}>{items}</ul>);
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (index < lines.length) {
+      const paragraphLine = lines[index].trim();
+      if (!paragraphLine || /^(#{1,3})\s+/.test(paragraphLine) || /^[-*]\s+/.test(paragraphLine)) break;
+      paragraphLines.push(paragraphLine.replace(/^>\s?/, ''));
+      index += 1;
+    }
+    nodes.push(
+      <Paragraph className="upgrade-page__release-paragraph" key={`paragraph-${index}`}>
+        {renderInlineReleaseText(paragraphLines.join(' '), `paragraph-${index}`)}
+      </Paragraph>
+    );
+  }
+
+  return nodes;
+};
+
 export default function UpgradeConfigPage() {
   const status = useUpgradeStore((state) => state.status);
   const loading = useUpgradeStore((state) => state.loading);
@@ -156,8 +226,10 @@ export default function UpgradeConfigPage() {
   const [rollbackConfirmText, setRollbackConfirmText] = useState('');
   const [rollbackSubmitting, setRollbackSubmitting] = useState(false);
   const [taskPolling, setTaskPolling] = useState(false);
+  const [releaseNotesExpanded, setReleaseNotesExpanded] = useState(false);
   const pollingBaseline = useRef('');
   const pollingTaskSeen = useRef(false);
+  const releaseNotesCardRef = useRef<HTMLDivElement>(null);
   const [sourceForm] = Form.useForm<UpgradeSourceSetting>();
   const [deploymentForm] = Form.useForm<DeploymentConfigSaveParams>();
   const composeProfiles = Form.useWatch('composeProfiles', deploymentForm) || '';
@@ -244,6 +316,10 @@ export default function UpgradeConfigPage() {
       loadUpdaterLogs();
     }
   }, [installOpen, loadUpdaterLogs]);
+
+  useEffect(() => {
+    setReleaseNotesExpanded(false);
+  }, [status?.latestVersion]);
 
   useEffect(() => {
     if (!taskPolling) return;
@@ -410,7 +486,7 @@ export default function UpgradeConfigPage() {
   };
 
   const releaseLinks = (
-    <Space wrap size={12}>
+    <Space className="upgrade-page__release-links" wrap size={[16, 8]}>
       {status?.giteeReleaseUrl && (
         <a href={status.giteeReleaseUrl} target="_blank" rel="noreferrer">
           <FileTextOutlined /> Gitee 发布页
@@ -432,6 +508,78 @@ export default function UpgradeConfigPage() {
         </a>
       )}
     </Space>
+  );
+  const hasReleaseLinks = Boolean(
+    status?.giteeReleaseUrl || status?.githubReleaseUrl || status?.docsUrl || status?.promptDocsUrl
+  );
+
+  const releaseNotes = status?.releaseNotes?.trim() || '';
+  const releaseNotesIsLong = releaseNotes.length > 1200 || releaseNotes.split(/\r?\n/).length > 18;
+  const handleReleaseNotesToggle = () => {
+    if (releaseNotesExpanded) {
+      setReleaseNotesExpanded(false);
+      window.requestAnimationFrame(() => {
+        releaseNotesCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      return;
+    }
+    setReleaseNotesExpanded(true);
+  };
+
+  const releaseNotesCard = (
+    <div className="upgrade-page__release-card-anchor" ref={releaseNotesCardRef}>
+      <Card
+        className="upgrade-page__release-card"
+        bordered={false}
+        title={<Space size={8}><FileTextOutlined /><span>版本说明</span></Space>}
+      >
+        <div className="upgrade-page__release-meta">
+          <div>
+            <Text type="secondary">最新版本</Text>
+            <Text strong>{status?.latestVersion ? `v${status.latestVersion}` : '-'}</Text>
+          </div>
+          {status?.latestVersion && (
+            <Tag color={status.latestChannel === 'beta' ? 'purple' : 'blue'}>
+              {status.latestChannel === 'beta' ? '测试版' : '正式版'}
+            </Tag>
+          )}
+          <Text className="upgrade-page__release-date" type="secondary">
+            发布时间：{status?.publishedAt || '-'}
+          </Text>
+        </div>
+
+        {releaseNotes ? (
+          <>
+            <div
+              className={`upgrade-page__release-viewport${releaseNotesExpanded ? ' upgrade-page__release-viewport--expanded' : ''}`}
+            >
+              <div className="upgrade-page__release-content">{renderReleaseNotes(releaseNotes)}</div>
+              {releaseNotesIsLong && !releaseNotesExpanded && <div className="upgrade-page__release-fade" />}
+            </div>
+            {releaseNotesIsLong && (
+              <Button
+                className="upgrade-page__release-toggle"
+                type="link"
+                icon={releaseNotesExpanded ? <UpOutlined /> : <DownOutlined />}
+                onClick={handleReleaseNotesToggle}
+              >
+                {releaseNotesExpanded ? '收起版本说明' : '展开全部'}
+              </Button>
+            )}
+          </>
+        ) : (
+          <div className="upgrade-page__release-empty">
+            <FileTextOutlined />
+            <div>
+              <Text strong>暂无版本说明</Text>
+              <Text type="secondary">发布说明补充后将在这里展示。</Text>
+            </div>
+          </div>
+        )}
+
+        {hasReleaseLinks && <div className="upgrade-page__release-footer">{releaseLinks}</div>}
+      </Card>
+    </div>
   );
 
   const statusNotice = (() => {
@@ -464,7 +612,7 @@ export default function UpgradeConfigPage() {
           type="warning"
           showIcon
           message={`当前版本低于最低直升版本 v${status.minimumVersion}`}
-          description={<Space direction="vertical" size={6}><Text>请先安装中间版本，再执行一键升级。</Text>{releaseLinks}</Space>}
+          description="请先安装中间版本，再执行一键升级。"
         />
       );
     }
@@ -483,14 +631,7 @@ export default function UpgradeConfigPage() {
               <Text type="secondary">{status.publishedAt || '-'}</Text>
             </Space>
           }
-          description={
-            <div>
-              <Paragraph className="upgrade-page__release-notes">
-                {status.releaseNotes || '本次发布未提供更新日志。'}
-              </Paragraph>
-              {releaseLinks}
-            </div>
-          }
+          description="升级前会自动备份并校验制品，服务将在升级期间短暂重启。"
           action={
             <Button
               type="primary"
@@ -1048,7 +1189,10 @@ export default function UpgradeConfigPage() {
             <RocketOutlined />
             项目升级
           </h3>
-          <Text type="secondary">最近检查：{status?.checkedAt || '-'}</Text>
+          <div className="upgrade-page__header-subtitle">
+            <Text type="secondary">统一管理版本发布、升级器状态与运行配置</Text>
+            <Text type="secondary">最近检查：{status?.checkedAt || '-'}</Text>
+          </div>
         </div>
         <Space wrap>
           <Button type="primary" icon={<SyncOutlined />} loading={checking} onClick={() => loadStatus(true)}>
@@ -1063,30 +1207,59 @@ export default function UpgradeConfigPage() {
       <Spin spinning={loading && !status}>
         <section className="upgrade-page__status-strip">
           <div className="upgrade-page__status-item">
-            <span>当前版本</span>
-            <strong>{status?.currentVersion ? `v${status.currentVersion}` : '-'}</strong>
+            <span className="upgrade-page__status-icon"><CheckCircleOutlined /></span>
+            <div className="upgrade-page__status-content">
+              <span>当前版本</span>
+              <strong>{status?.currentVersion ? `v${status.currentVersion}` : '-'}</strong>
+            </div>
           </div>
           <div className="upgrade-page__status-item">
-            <span>线上版本</span>
-            <strong>{status?.latestVersion ? `v${status.latestVersion}` : '-'}</strong>
-            {status?.latestVersion && (
-              <Tag color={status.latestChannel === 'beta' ? 'purple' : 'blue'}>
-                {status.latestChannel === 'beta' ? '测试版' : '正式版'}
-              </Tag>
-            )}
+            <span className="upgrade-page__status-icon"><CloudDownloadOutlined /></span>
+            <div className="upgrade-page__status-content">
+              <span>线上版本</span>
+              <div>
+                <strong>{status?.latestVersion ? `v${status.latestVersion}` : '-'}</strong>
+                {status?.latestVersion && (
+                  <Tag color={status.latestChannel === 'beta' ? 'purple' : 'blue'}>
+                    {status.latestChannel === 'beta' ? '测试版' : '正式版'}
+                  </Tag>
+                )}
+              </div>
+            </div>
           </div>
           <div className="upgrade-page__status-item">
-            <span>升级器</span>
-            <strong>{updaterTag.text}</strong>
-            <Tag color={updaterTag.color}>{updater?.version ? `v${updater.version}` : '-'}</Tag>
+            <span className="upgrade-page__status-icon"><ControlOutlined /></span>
+            <div className="upgrade-page__status-content">
+              <span>升级器</span>
+              <div>
+                <strong>{updaterTag.text}</strong>
+                <Tag color={updaterTag.color}>{updater?.version ? `v${updater.version}` : '-'}</Tag>
+              </div>
+            </div>
           </div>
           <div className="upgrade-page__status-item">
-            <span>可回退版本</span>
-            <strong>{rollbackCount}</strong>
+            <span className="upgrade-page__status-icon"><HistoryOutlined /></span>
+            <div className="upgrade-page__status-content">
+              <span>可回退版本</span>
+              <strong>{rollbackCount}</strong>
+            </div>
           </div>
         </section>
 
-        <div className="upgrade-page__notice">{statusNotice}</div>
+        <Row className="upgrade-page__overview-grid" gutter={[16, 16]}>
+          <Col xs={24} lg={8}>
+            <Card
+              className="upgrade-page__status-card"
+              bordered={false}
+              title={<Space size={8}><SyncOutlined /><span>更新状态</span></Space>}
+            >
+              <div className="upgrade-page__notice">
+                {statusNotice || <Text type="secondary">正在获取最新状态…</Text>}
+              </div>
+            </Card>
+          </Col>
+          <Col xs={24} lg={16}>{releaseNotesCard}</Col>
+        </Row>
 
         <Card className="upgrade-page__workspace" bordered={false}>
           <Tabs
