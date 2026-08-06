@@ -75,6 +75,26 @@ export interface BalanceAdjustParams {
   reason?: string;
 }
 
+/** 后台新增用户请求（邮箱和手机号必须二选一） */
+export interface AdminUserCreateParams {
+  /** 用户邮箱 */
+  email?: string;
+  /** 用户手机号 */
+  phonenumber?: string;
+}
+
+/** 新增成功后仅返回一次的登录凭据 */
+export interface AdminUserCreateResult {
+  /** 用户ID */
+  userId: number;
+  /** 可用于登录的邮箱或手机号 */
+  account: string;
+  /** 账号类型：phone / email */
+  accountType: 'phone' | 'email';
+  /** 系统生成的初始密码 */
+  password: string;
+}
+
 // 查询用户扩展信息列表（联表 sys_user）
 export function listExtenduserprofile(query: UserProfileQuery) {
   return request({
@@ -89,6 +109,15 @@ export function getExtenduserprofile(id: number | string) {
   return request({
     url: '/aid/extenduserprofile/' + id,
     method: 'get'
+  });
+}
+
+// 新增 C 端用户（自动初始化用户扩展信息和账户余额）
+export function createExtenduserprofile(data: AdminUserCreateParams) {
+  return request<AdminUserCreateResult>({
+    url: '/aid/extenduserprofile',
+    method: 'post',
+    data
   });
 }
 

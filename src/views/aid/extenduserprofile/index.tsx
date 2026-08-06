@@ -1,17 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Avatar, Button, Card, Col, Descriptions, Drawer, Empty, Form, Input, InputNumber,
-  Modal, Radio, Row, Select, Space, Statistic, Table, Tabs, Tag, Tooltip, message
+  Alert, Avatar, Button, Card, Col, Descriptions, Drawer, Empty, Form, Input, InputNumber,
+  Modal, Radio, Row, Select, Space, Statistic, Table, Tabs, Tag, Tooltip, Typography, message
 } from 'antd';
 import {
   DollarOutlined, EditOutlined, EyeOutlined, KeyOutlined, LockOutlined,
-  ReloadOutlined, SearchOutlined, UnlockOutlined, UserOutlined, DeleteOutlined
+  PlusOutlined, ReloadOutlined, SearchOutlined, UnlockOutlined, UserOutlined, DeleteOutlined
 } from '@ant-design/icons';
 
 import {
   listExtenduserprofile, updateExtenduserprofile, adjustBalance,
-  changeUserBanStatus, deleteUser,
-  type UserProfileVo, type UserProfileQuery
+  changeUserBanStatus, createExtenduserprofile, deleteUser,
+  type AdminUserCreateResult, type UserProfileVo, type UserProfileQuery
 } from '@/api/aid/extenduserprofile';
 import { listThridsocial } from '@/api/aid/thridsocial';
 import { listBalancelog } from '@/api/aid/balancelog';
@@ -24,6 +24,7 @@ import './style.less';
 
 const PERM_EDIT = 'aid:extenduserprofile:edit';
 const PERM_REMOVE = 'aid:extenduserprofile:remove';
+const PERM_ADD = 'aid:extenduserprofile:add';
 
 /** 余额变动类型中文映射（与后端 changeType 对齐） */
 const CHANGE_TYPE_MAP: Record<string, { label: string; color: string }> = {
@@ -54,6 +55,7 @@ export default function UserManagePage() {
   const { hasPermi } = useAuth();
   const canEdit = hasPermi(PERM_EDIT);
   const canRemove = hasPermi(PERM_REMOVE);
+  const canAdd = hasPermi(PERM_ADD);
 
   const dicts = useDict('sys_normal_disable', 'sys_user_sex');
   const statusDict = dicts['sys_normal_disable'] || [];
@@ -64,6 +66,13 @@ export default function UserManagePage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState<UserProfileQuery>({ pageNum: 1, pageSize: 10 });
+
+  // 新增用户与一次性登录凭据
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm] = Form.useForm();
+  const [createSaving, setCreateSaving] = useState(false);
+  const [createdCredential, setCreatedCredential] = useState<AdminUserCreateResult | null>(null);
+  const [credentialOpen, setCredentialOpen] = useState(false);
 
   // 详情抽屉
   const [detailOpen, setDetailOpen] = useState(false);
@@ -114,6 +123,31 @@ export default function UserManagePage() {
   const handleReset = () => {
     searchForm.resetFields();
     setQuery({ pageNum: 1, pageSize: query.pageSize });
+  };
+
+  const openCreate = () => {
+    createForm.resetFields();
+    createForm.setFieldsValue({ accountType: 'phone' });
+    setCreateOpen(true);
+  };
+
+  const submitCreate = async () => {
+    const values = await createForm.validateFields();
+    const account = String(values.account || '').trim();
+    const payload = values.accountType === 'email'
+      ? { email: account }
+      : { phonenumber: account };
+    setCreateSaving(true);
+    try {
+      const res = await createExtenduserprofile(payload);
+      setCreateOpen(false);
+      setCreatedCredential(res.data);
+      setCredentialOpen(true);
+      message.success('用户添加成功');
+      loadList();
+    } finally {
+      setCreateSaving(false);
+    }
   };
 
   // 打开详情：加载三方账户 + 余额流水
@@ -268,6 +302,12 @@ export default function UserManagePage() {
         title: '手机号',
         dataIndex: 'phonenumber',
         width: 130,
+        render: (v: string) => v || <span className="muted">-</span>
+      },
+      {
+        title: '邮箱',
+        dataIndex: 'email',
+        width: 220,
         render: (v: string) => v || <span className="muted">-</span>
       },
       {
@@ -455,6 +495,13 @@ export default function UserManagePage() {
 
       {/* 列表 */}
       <Card bordered={false} className="page-card user-manage__table">
+        {canAdd && (
+          <div className="user-manage__toolbar">
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              添加用户
+            </Button>
+          </div>
+        )}
         <Table<UserProfileVo>
           rowKey="id"
           size="middle"
@@ -638,6 +685,106 @@ export default function UserManagePage() {
           </>
         )}
       </Drawer>
+
+      {/* 新增用户 */}
+      <Modal
+        title="添加用户"
+        open={createOpen}
+        onCancel={() => setCreateOpen(false)}
+        onOk={submitCreate}
+        okText="确认生成"
+        confirmLoading={createSaving}
+        destroyOnClose
+        maskClosable={false}
+      >
+        <Alert
+          type="info"
+          showIcon
+          message="邮箱和手机号二选一，系统将自动生成初始密码。"
+          style={{ marginBottom: 16 }}
+        />
+        <Form form={createForm} layout="vertical" preserve={false}>
+          <Form.Item name="accountType" label="账号类型" rules={[{ required: true }]}>
+            <Radio.Group
+              optionType="button"
+              buttonStyle="solid"
+              onChange={() => createForm.setFieldValue('account', undefined)}
+            >
+              <Radio.Button value="phone">手机号</Radio.Button>
+              <Radio.Button value="email">邮箱</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(previous, currentValue) => previous.accountType !== currentValue.accountType}>
+            {({ getFieldValue }) => {
+              const accountType = getFieldValue('accountType');
+              const isEmail = accountType === 'email';
+              return (
+                <Form.Item
+                  name="account"
+                  label={isEmail ? '邮箱' : '手机号'}
+                  rules={isEmail
+                    ? [
+                        { required: true, message: '请输入邮箱' },
+                        { type: 'email', message: '邮箱格式错误' },
+                        { max: 50, message: '邮箱长度不能超过50位' }
+                      ]
+                    : [
+                        { required: true, message: '请输入手机号' },
+                        { pattern: /^1[3-9]\d{9}$/, message: '手机号格式错误' }
+                      ]}
+                >
+                  <Input
+                    allowClear
+                    maxLength={isEmail ? 50 : 11}
+                    placeholder={isEmail ? '请输入用户邮箱' : '请输入用户手机号'}
+                  />
+                </Form.Item>
+              );
+            }}
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 一次性登录凭据 */}
+      <Modal
+        title="用户添加成功"
+        open={credentialOpen}
+        onCancel={() => setCredentialOpen(false)}
+        onOk={() => setCredentialOpen(false)}
+        okText="我已保存"
+        cancelButtonProps={{ style: { display: 'none' } }}
+        afterClose={() => setCreatedCredential(null)}
+        destroyOnClose
+        maskClosable={false}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          message="初始密码仅显示本次，请复制后安全发送给用户。"
+          style={{ marginBottom: 16 }}
+        />
+        {createdCredential && (
+          <div className="credential-result">
+            <div className="credential-result__label">登录账号</div>
+            <Typography.Paragraph copyable={{ text: createdCredential.account }}>
+              {createdCredential.account}
+            </Typography.Paragraph>
+            <div className="credential-result__label">初始密码</div>
+            <Typography.Paragraph copyable={{ text: createdCredential.password }}>
+              <Typography.Text code>{createdCredential.password}</Typography.Text>
+            </Typography.Paragraph>
+            <Typography.Paragraph
+              className="credential-result__all"
+              copyable={{
+                text: `账号：${createdCredential.account}\n密码：${createdCredential.password}`,
+                tooltips: ['复制账号和密码', '已复制']
+              }}
+            >
+              复制完整登录信息
+            </Typography.Paragraph>
+          </div>
+        )}
+      </Modal>
 
       {/* 调整余额 */}
       <Modal

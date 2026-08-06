@@ -15,6 +15,7 @@ import { getAdminEntryStatus, verifyAdminEntry } from '@/api/aid/adminEntry';
 import { useUserStore } from '@/store/useUserStore';
 import { usePermissionStore } from '@/store/usePermissionStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
+import { useAdminBrandStore } from '@/store/useAdminBrandStore';
 import { isPathMatch } from '@/utils/validate';
 
 import MainLayout from '@/layouts/MainLayout';
@@ -31,6 +32,8 @@ import LoadingFallback from './components/LoadingFallback';
 import DynamicRouteRenderer from './components/DynamicRouteRenderer';
 
 NProgress.configure({ showSpinner: false });
+
+const JobLogPage = lazy(() => import('@/views/monitor/job/log'));
 
 const WHITE_LIST = ['/login', '/register', '/404', '/401'];
 
@@ -67,6 +70,9 @@ function RootGuard() {
   const location = useLocation();
   const navigate = useNavigate();
   const setTitle = useSettingsStore((s) => s.setTitle);
+  const siteName = useAdminBrandStore((s) => s.resolvedSiteName);
+  const brandLoaded = useAdminBrandStore((s) => s.loaded);
+  const loadBrand = useAdminBrandStore((s) => s.load);
 
   const token = useUserStore((s) => s.token);
   const roles = useUserStore((s) => s.roles);
@@ -79,6 +85,10 @@ function RootGuard() {
   const [gateChecking, setGateChecking] = useState(!getToken());
   // 启用随机入口且访问码校验通过时，直接在 /<访问码> 地址渲染登录页（不跳转 /login）
   const [secretLogin, setSecretLogin] = useState(false);
+
+  useEffect(() => {
+    if (!brandLoaded) loadBrand();
+  }, [brandLoaded, loadBrand]);
 
   useEffect(() => {
     NProgress.start();
@@ -173,12 +183,12 @@ function RootGuard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
-  // 动态 title
+  // 平台名称来自后台专用品牌接口，不能复用 C 端公开配置接口
   useEffect(() => {
-    const title = import.meta.env.VITE_APP_TITLE || 'AID 管理系统';
+    const title = `${siteName} 管理系统`;
     document.title = title;
     setTitle(title);
-  }, [setTitle]);
+  }, [setTitle, siteName]);
 
   if (gateChecking) {
     return <LoadingFallback />;
@@ -227,6 +237,11 @@ const router = createBrowserRouter([
             path: 'user/profile',
             element: <ProfilePage />,
             handle: { title: '个人中心', icon: 'user', name: 'Profile' }
+          },
+          {
+            path: 'monitor/job-log/index/:jobId',
+            element: <JobLogPage />,
+            handle: { title: '调度日志', name: 'JobLog' }
           },
           // 动态路由占位：支持无限层级的后端路由
           { path: '*', element: <DynamicRouteRenderer /> }

@@ -61,7 +61,7 @@ export default function LoginPage() {
   const generateRoutes = usePermissionStore((s) => s.generateRoutes);
   const fetchInfo = useUserStore((s) => s.fetchInfo);
   const loginLogo = useAdminBrandStore((s) => s.resolvedLoginLogo);
-  const loadBrand = useAdminBrandStore((s) => s.load);
+  const siteName = useAdminBrandStore((s) => s.resolvedSiteName);
 
   const fetchCaptcha = async () => {
     try {
@@ -78,7 +78,6 @@ export default function LoginPage() {
   };
 
   useEffect(() => {
-    loadBrand();
     fetchCaptcha();
     const username = Cookies.get('username');
     const rememberMe = Cookies.get('rememberMe');
@@ -144,7 +143,7 @@ export default function LoginPage() {
         <div className="login-page__brand">
           <img src={loginLogo} alt="logo" />
           <div className="login-page__brand-text">
-            <span className="login-page__brand-title">AID Manager</span>
+            <span className="login-page__brand-title">{siteName}</span>
             <span className="login-page__brand-sub">AI 内容创作中台</span>
           </div>
         </div>
@@ -181,7 +180,7 @@ export default function LoginPage() {
         </div>
 
         <div className="login-page__showcase-footer">
-          Copyright © 2018 - 2026 AID Studio. All Rights Reserved.
+          Copyright © 2018 - 2026 {siteName}. All Rights Reserved.
         </div>
       </motion.div>
 
@@ -195,7 +194,7 @@ export default function LoginPage() {
         >
           <div className="login-page__panel-header">
             <h2>欢迎回来</h2>
-            <p>登录 AID 后台管理系统</p>
+            <p>登录 {siteName} 后台管理系统</p>
           </div>
 
           <Form

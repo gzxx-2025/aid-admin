@@ -15,6 +15,7 @@ import dayjs from 'dayjs';
 import { motion } from 'framer-motion';
 
 import { useUserStore } from '@/store/useUserStore';
+import { useAdminBrandStore } from '@/store/useAdminBrandStore';
 import { getDashboardOverview } from '@/api/aid/dashboard';
 import ModelMonitor from '@/views/aid/modelmonitor';
 import './index.less';
@@ -54,6 +55,7 @@ const EMPTY_COUNTS: Counts = {
 
 export default function Dashboard() {
   const { nickName } = useUserStore();
+  const siteName = useAdminBrandStore((s) => s.resolvedSiteName);
   const [loading, setLoading] = useState(true);
   const [counts, setCounts] = useState<Counts>(EMPTY_COUNTS);
 
@@ -150,7 +152,7 @@ export default function Dashboard() {
       >
         <div className="dashboard__hero-main">
           <h2>{greet}，{nickName || '管理员'} 👋</h2>
-          <p>欢迎使用 AID 漫剧创作管理平台，以下是平台实时业务概览。</p>
+          <p>欢迎使用 {siteName} 漫剧创作管理平台，以下是平台实时业务概览。</p>
           <div className="dashboard__hero-time">
             <CalendarOutlined />
             {dayjs().format('YYYY 年 MM 月 DD 日 dddd')}

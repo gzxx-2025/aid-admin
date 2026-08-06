@@ -1,13 +1,15 @@
 import React from 'react';
 import { Result, Button } from 'antd';
 import { useNavigate } from 'react-router-dom';
+import { useAdminBrandStore } from '@/store/useAdminBrandStore';
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const siteName = useAdminBrandStore((s) => s.resolvedSiteName);
   return (
     <div style={{ padding: 60 }}>
       <Result
-        title="注册功能暂未开放"
+        title={`${siteName} 注册功能暂未开放`}
         subTitle="请联系管理员开通账号"
         extra={
           <Button type="primary" onClick={() => navigate('/login')}>

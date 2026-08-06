@@ -1,13 +1,14 @@
-import request from '@/utils/request';
+import { request } from '@/utils/request';
 
 export interface AdminBrandConfig {
+  siteName?: string;
   platformLogoUrl?: string;
   faviconUrl?: string;
 }
 
-/** 匿名拉取平台品牌图片配置（平台 LOGO / 页签图标） */
+/** 匿名拉取后台平台品牌配置（平台名称 / LOGO / 页签图标） */
 export function getAdminBrandPublic() {
-  return request({
+  return request<AdminBrandConfig>({
     url: '/aid/adminBrand/public',
     method: 'get',
     headers: { isToken: false, repeatSubmit: false } as any

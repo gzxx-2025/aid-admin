@@ -37,7 +37,7 @@ const defaults = {
   sidebarLogo: true,
   dynamicTitle: false,
   footerVisible: false,
-  footerContent: 'Copyright © 2018-2026 AID Studio. All Rights Reserved.'
+  footerContent: 'Copyright © 2018-2026. All Rights Reserved.'
 };
 
 export const useSettingsStore = create<SettingsState>((set) => ({

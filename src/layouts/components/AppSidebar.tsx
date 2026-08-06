@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { Menu, Dropdown, Avatar, Modal } from 'antd';
 import type { MenuProps } from 'antd';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -61,12 +61,7 @@ export default function AppSidebar({ collapsed }: Props) {
   const navigate = useNavigate();
   const { nickName, avatar, logout } = useUserStore();
   const sidebarLogo = useAdminBrandStore((s) => s.resolvedSidebarLogo);
-  const loadBrand = useAdminBrandStore((s) => s.load);
-  const brandLoaded = useAdminBrandStore((s) => s.loaded);
-
-  useEffect(() => {
-    if (!brandLoaded) loadBrand();
-  }, [brandLoaded, loadBrand]);
+  const siteName = useAdminBrandStore((s) => s.resolvedSiteName);
 
   const menuItems = useMemo(() => convertToMenuItems(sidebarRouters), [sidebarRouters]);
 
@@ -113,7 +108,7 @@ export default function AppSidebar({ collapsed }: Props) {
         <img src={sidebarLogo} alt="logo" />
         {!collapsed && (
           <div className="app-sidebar__brand">
-            <span className="app-sidebar__title">AID Manager</span>
+            <span className="app-sidebar__title">{siteName}</span>
             <SidebarVersionPanel collapsed={collapsed} />
           </div>
         )}
