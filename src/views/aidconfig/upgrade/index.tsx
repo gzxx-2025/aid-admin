@@ -25,7 +25,9 @@ import {
 } from 'antd';
 import {
   CheckCircleOutlined,
+  CloseOutlined,
   CloudDownloadOutlined,
+  CodeOutlined,
   ControlOutlined,
   DatabaseOutlined,
   DownOutlined,
@@ -90,6 +92,8 @@ const TASK_ACTION_TEXT: Record<string, string> = {
   CONFIG_APPLY: '配置应用',
   CONFIG_ROLLBACK: '配置恢复'
 };
+
+const VERSION_TASK_ACTIONS = new Set(['UPGRADE', 'UPDATER_UPGRADE', 'ROLLBACK']);
 
 const deploymentToForm = (config: DeploymentConfig): DeploymentConfigSaveParams => {
   const value = config.values || {};
@@ -256,9 +260,12 @@ export default function UpgradeConfigPage() {
   const [rollbackConfirmText, setRollbackConfirmText] = useState('');
   const [rollbackSubmitting, setRollbackSubmitting] = useState(false);
   const [taskPolling, setTaskPolling] = useState(false);
+  const [pendingTaskAction, setPendingTaskAction] = useState<string>();
+  const [dismissedTaskId, setDismissedTaskId] = useState<string>();
   const [releaseNotesExpanded, setReleaseNotesExpanded] = useState(false);
   const pollingBaseline = useRef('');
   const pollingTaskSeen = useRef(false);
+  const terminalRef = useRef<HTMLPreElement>(null);
   const releaseNotesCardRef = useRef<HTMLDivElement>(null);
   const [sourceForm] = Form.useForm<UpgradeSourceSetting>();
   const [deploymentForm] = Form.useForm<DeploymentConfigSaveParams>();
@@ -273,6 +280,17 @@ export default function UpgradeConfigPage() {
   const rollbackCount = status?.rollbackReleases?.length || 0;
   const lastTask = updater?.lastTask;
   const lastTaskMeta = lastTask?.state ? TASK_STATE_META[lastTask.state] : undefined;
+  const taskRunning = lastTask?.state === 'RUNNING';
+  const taskBusy = taskRunning || taskPolling;
+  const progressAction = pendingTaskAction || lastTask?.action;
+  const isVersionTask = Boolean(progressAction && VERSION_TASK_ACTIONS.has(progressAction));
+  const awaitingVersionTask = Boolean(pendingTaskAction && taskPolling && !taskRunning && !pollingTaskSeen.current);
+  const progressTaskId = awaitingVersionTask
+    ? `${pendingTaskAction}-pending`
+    : lastTask?.taskId || pendingTaskAction || 'pending';
+  // 历史完成任务不在每次进入页面时占据首屏；本次会话发起或仍在运行的版本任务才展示终端。
+  const showProgressTerminal =
+    isVersionTask && (taskRunning || Boolean(pendingTaskAction)) && dismissedTaskId !== progressTaskId;
   const selectedRollback = status?.rollbackReleases?.find((item) => item.version === rollbackVersion);
 
   const loadStatus = useCallback(
@@ -324,15 +342,15 @@ export default function UpgradeConfigPage() {
     }
   }, [deploymentForm]);
 
-  const loadUpdaterLogs = useCallback(async () => {
-    setLogsLoading(true);
+  const loadUpdaterLogs = useCallback(async (silent = false) => {
+    if (!silent) setLogsLoading(true);
     try {
       const res = await getUpdaterLogs();
       setUpdaterLogs(res.data || null);
     } catch {
-      setUpdaterLogs(null);
+      if (!silent) setUpdaterLogs(null);
     } finally {
-      setLogsLoading(false);
+      if (!silent) setLogsLoading(false);
     }
   }, []);
 
@@ -359,9 +377,32 @@ export default function UpgradeConfigPage() {
 
   useEffect(() => {
     if (installOpen) {
-      loadUpdaterLogs();
+      loadUpdaterLogs(false);
     }
   }, [installOpen, loadUpdaterLogs]);
+
+  useEffect(() => {
+    if (!taskRunning || !lastTask?.action) return;
+    setPendingTaskAction(lastTask.action);
+    setDismissedTaskId(undefined);
+    pollingBaseline.current = taskKey(lastTask);
+    pollingTaskSeen.current = true;
+    setTaskPolling(true);
+  }, [lastTask?.action, lastTask?.taskId, taskRunning]);
+
+  useEffect(() => {
+    if (!showProgressTerminal) return;
+    loadUpdaterLogs(true);
+    if (!taskBusy) return;
+    const timer = window.setInterval(() => loadUpdaterLogs(true), 1200);
+    return () => window.clearInterval(timer);
+  }, [loadUpdaterLogs, showProgressTerminal, taskBusy]);
+
+  useEffect(() => {
+    if (!showProgressTerminal) return;
+    const terminal = terminalRef.current;
+    if (terminal) terminal.scrollTop = terminal.scrollHeight;
+  }, [showProgressTerminal, updaterLogs?.lines]);
 
   useEffect(() => {
     setReleaseNotesExpanded(false);
@@ -385,12 +426,13 @@ export default function UpgradeConfigPage() {
         }
         if (pollingTaskSeen.current && nextTask?.state !== 'RUNNING') {
           setTaskPolling(false);
+          loadUpdaterLogs(true).catch(() => undefined);
           loadDeployment().catch(() => undefined);
-        } else if (attempts >= 60) {
+        } else if (attempts >= 2880) {
           setTaskPolling(false);
         }
       } catch {
-        if (attempts >= 60) setTaskPolling(false);
+        if (attempts >= 2880) setTaskPolling(false);
       } finally {
         requesting = false;
       }
@@ -402,11 +444,13 @@ export default function UpgradeConfigPage() {
       window.clearTimeout(firstTimer);
       window.clearInterval(timer);
     };
-  }, [loadDeployment, loadStatusShared, taskPolling]);
+  }, [loadDeployment, loadStatusShared, loadUpdaterLogs, taskPolling]);
 
-  const beginTaskPolling = useCallback(() => {
+  const beginTaskPolling = useCallback((action: string) => {
     pollingBaseline.current = taskKey(useUpgradeStore.getState().status?.updater?.lastTask);
     pollingTaskSeen.current = false;
+    setPendingTaskAction(action);
+    setDismissedTaskId(undefined);
     setTaskPolling(true);
   }, []);
 
@@ -434,7 +478,7 @@ export default function UpgradeConfigPage() {
     try {
       const res: any = await validateDeploymentConfig(values);
       message.success(res?.msg || '配置校验任务已受理');
-      beginTaskPolling();
+      beginTaskPolling('CONFIG_VALIDATE');
     } finally {
       setDeploymentSaving(false);
     }
@@ -454,7 +498,7 @@ export default function UpgradeConfigPage() {
           const res: any = await applyDeploymentConfig(values);
           message.success(res?.msg || '配置应用任务已受理');
           setDeploymentDirty(false);
-          beginTaskPolling();
+          beginTaskPolling('CONFIG_APPLY');
         } finally {
           setDeploymentSaving(false);
         }
@@ -473,36 +517,72 @@ export default function UpgradeConfigPage() {
       onOk: async () => {
         const res: any = await rollbackDeploymentConfig();
         message.success(res?.msg || '配置恢复任务已受理');
-        beginTaskPolling();
+        beginTaskPolling('CONFIG_ROLLBACK');
       }
     });
   };
 
   const handleStartUpgrade = () => {
+    if (taskBusy) {
+      message.warning('已有升级任务正在执行，请等待完成');
+      return;
+    }
+    const hostResources = status?.hostResources;
+    const resourceRisk = Boolean(hostResources?.detected && hostResources.onlineUpgradeRisk);
+    const resourceText = hostResources?.detected
+      ? `${hostResources.cpuCores || '-'} 核 / ${formatBytes(hostResources.totalMemoryBytes)}`
+      : '未检测到';
     Modal.confirm({
-      title: '确认升级系统？',
-      icon: <ExclamationCircleOutlined />,
+      title: resourceRisk ? '高风险：当前服务器配置可能导致升级宕机' : '确认升级系统？',
+      icon: <ExclamationCircleOutlined style={resourceRisk ? { color: '#ff4d4f' } : undefined} />,
+      width: resourceRisk ? 600 : undefined,
+      centered: resourceRisk,
+      maskClosable: resourceRisk ? false : undefined,
+      keyboard: resourceRisk ? false : undefined,
       content: (
-        <Descriptions size="small" column={1} className="upgrade-page__confirm-details">
-          <Descriptions.Item label="当前版本">v{status?.currentVersion || '-'}</Descriptions.Item>
-          <Descriptions.Item label="目标版本">v{status?.latestVersion || '-'}</Descriptions.Item>
-          <Descriptions.Item label="发布渠道">
-            {status?.latestChannel === 'beta' ? '测试版' : '正式版'}
-          </Descriptions.Item>
-          <Descriptions.Item label="影响">服务将短暂重启，升级器会先创建备份</Descriptions.Item>
-        </Descriptions>
+        <div>
+          {resourceRisk && (
+            <Alert
+              className="upgrade-page__resource-risk"
+              type="error"
+              showIcon
+              message="CPU 不超过 4 核或内存不超过 4 GiB，属于在线升级高风险配置"
+              description="在线升级需要在本机拉取并编译服务端、后台管理端和 Web 端，可能持续占满 CPU 和内存，导致 AID 服务无响应、构建被系统杀死，严重时可能引起服务器宕机。"
+            />
+          )}
+          <Descriptions size="small" column={1} className="upgrade-page__confirm-details">
+            <Descriptions.Item label="当前版本">v{status?.currentVersion || '-'}</Descriptions.Item>
+            <Descriptions.Item label="目标版本">v{status?.latestVersion || '-'}</Descriptions.Item>
+            <Descriptions.Item label="发布渠道">
+              {status?.latestChannel === 'beta' ? '测试版' : '正式版'}
+            </Descriptions.Item>
+            <Descriptions.Item label="服务器配置">{resourceText}</Descriptions.Item>
+            <Descriptions.Item label="影响">服务将短暂重启，升级器会先创建备份</Descriptions.Item>
+          </Descriptions>
+          {resourceRisk && (
+            <div className="upgrade-page__resource-risk-checklist">
+              继续前必须确认：数据库和配置已有异机备份；当前没有生成任务；服务器已配置足够的 Swap
+              或可用内存。更稳妥的做法是先升级服务器配置，再进行在线升级。
+            </div>
+          )}
+        </div>
       ),
-      okText: '开始升级',
+      okText: resourceRisk ? '我已备份，仍要升级' : '开始升级',
+      okButtonProps: resourceRisk ? { danger: true } : undefined,
       cancelText: '取消',
       onOk: async () => {
         const res: any = await startUpgrade();
         message.success(res?.msg || '升级任务已受理');
-        beginTaskPolling();
+        beginTaskPolling('UPGRADE');
       }
     });
   };
 
   const handleUpgradeUpdater = () => {
+    if (taskBusy) {
+      message.warning('已有升级任务正在执行，请等待完成');
+      return;
+    }
     Modal.confirm({
       title: '确认升级升级器？',
       icon: <ExclamationCircleOutlined />,
@@ -512,20 +592,24 @@ export default function UpgradeConfigPage() {
       onOk: async () => {
         const res: any = await startUpdaterUpgrade();
         message.success(res?.msg || '升级器升级任务已受理');
-        beginTaskPolling();
+        beginTaskPolling('UPDATER_UPGRADE');
       }
     });
   };
 
   const handleRollbackConfirm = async () => {
     if (!selectedRollback || rollbackConfirmText.trim() !== selectedRollback.version) return;
+    if (taskBusy) {
+      message.warning('已有升级任务正在执行，请等待完成');
+      return;
+    }
     setRollbackSubmitting(true);
     try {
       const res: any = await rollbackSystem(selectedRollback.version);
       message.success(res?.msg || '回退任务已受理');
       setRollbackConfirmOpen(false);
       setRollbackConfirmText('');
-      beginTaskPolling();
+      beginTaskPolling('ROLLBACK');
     } finally {
       setRollbackSubmitting(false);
     }
@@ -688,7 +772,7 @@ export default function UpgradeConfigPage() {
           message="请先升级升级器"
           description={`系统 v${status.latestVersion || '-'} 与升级器 v${updater.latestVersion || '-'} 均有更新。为保证SQL、备份和回滚协议兼容，必须先完成升级器更新。`}
           action={
-            <Button type="primary" onClick={handleUpgradeUpdater}>
+            <Button type="primary" disabled={taskBusy} onClick={handleUpgradeUpdater}>
               先升级升级器
             </Button>
           }
@@ -725,8 +809,16 @@ export default function UpgradeConfigPage() {
             <Button
               type="primary"
               icon={<RocketOutlined />}
-              disabled={!updater?.ready || updater?.hasUpdate}
-              title={updater?.hasUpdate ? '必须先升级升级器' : updater?.ready ? undefined : '需先安装并启动升级器'}
+              disabled={!updater?.ready || updater?.hasUpdate || taskBusy}
+              title={
+                taskBusy
+                  ? '已有任务正在执行'
+                  : updater?.hasUpdate
+                    ? '必须先升级升级器'
+                    : updater?.ready
+                      ? undefined
+                      : '需先安装并启动升级器'
+              }
               onClick={handleStartUpgrade}
             >
               立即升级
@@ -810,7 +902,7 @@ export default function UpgradeConfigPage() {
           showIcon
           message={`升级器可升级到 v${updater.latestVersion}`}
           action={
-            <Button type="primary" disabled={!updater.ready} onClick={handleUpgradeUpdater}>
+            <Button type="primary" disabled={!updater.ready || taskBusy} onClick={handleUpgradeUpdater}>
               在线升级
             </Button>
           }
@@ -839,7 +931,7 @@ export default function UpgradeConfigPage() {
         {rollbackCount > 0 && (
           <Button
             danger
-            disabled={!rollbackVersion || !updater?.ready}
+            disabled={!rollbackVersion || !updater?.ready || taskBusy}
             title={updater?.ready ? undefined : '需先安装并启动升级器'}
             onClick={() => {
               setRollbackConfirmText('');
@@ -1568,6 +1660,80 @@ export default function UpgradeConfigPage() {
     </div>
   );
 
+  const awaitingTask = awaitingVersionTask;
+  const terminalState = awaitingTask ? 'RUNNING' : lastTask?.state || 'RUNNING';
+  const terminalStateMeta = TASK_STATE_META[terminalState] || TASK_STATE_META.RUNNING;
+  const terminalProgress = awaitingTask
+    ? 0
+    : Math.max(0, Math.min(100, Number(lastTask?.progress ?? (terminalState === 'SUCCESS' ? 100 : 1))));
+  const versionProgressPanel = showProgressTerminal ? (
+    <Card className="upgrade-page__terminal-card" bordered={false}>
+      <div className="upgrade-page__terminal-titlebar">
+        <div className="upgrade-page__terminal-lights" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+        <div className="upgrade-page__terminal-title">
+          <CodeOutlined />
+          <span>AID Upgrade Console</span>
+          <Tag
+            color={
+              terminalStateMeta.alert === 'error' ? 'red' : terminalStateMeta.alert === 'success' ? 'green' : 'blue'
+            }
+          >
+            {terminalStateMeta.text}
+          </Tag>
+        </div>
+        <Space size={4}>
+          <Button type="text" size="small" icon={<ReloadOutlined />} onClick={() => loadUpdaterLogs(false)}>
+            刷新
+          </Button>
+          {!taskBusy && (
+            <Button
+              type="text"
+              size="small"
+              icon={<CloseOutlined />}
+              onClick={() => setDismissedTaskId(progressTaskId)}
+            >
+              关闭
+            </Button>
+          )}
+        </Space>
+      </div>
+      <div className="upgrade-page__terminal-progress">
+        <div>
+          <Text>{TASK_ACTION_TEXT[progressAction || ''] || '版本任务'}</Text>
+          <Text>{awaitingTask ? '等待升级器认领任务' : lastTask?.phase || lastTask?.message || '正在执行'}</Text>
+          <Text>{terminalProgress}%</Text>
+        </div>
+        <Progress
+          percent={terminalProgress}
+          showInfo={false}
+          status={terminalState === 'FAILED' ? 'exception' : terminalState === 'SUCCESS' ? 'success' : 'active'}
+          strokeColor={terminalState === 'FAILED' ? '#ff4d4f' : terminalState === 'SUCCESS' ? '#52c41a' : '#22c55e'}
+          trailColor="rgba(255,255,255,.12)"
+        />
+        <div className="upgrade-page__terminal-meta">
+          <span>任务：{lastTask?.taskId || '正在提交'}</span>
+          <span>开始：{lastTask?.startedAt || '-'}</span>
+          <span>更新：{lastTask?.updatedAt || lastTask?.finishedAt || '-'}</span>
+        </div>
+      </div>
+      <pre ref={terminalRef} className="upgrade-page__terminal-output">
+        {updaterLogs?.lines?.length
+          ? updaterLogs.lines.join('\n')
+          : awaitingTask
+            ? '$ 正在等待 aid-updater 认领任务...'
+            : updaterLogs?.message || '$ 暂无任务日志'}
+      </pre>
+      <div className="upgrade-page__terminal-footer">
+        <span className={taskBusy ? 'is-running' : ''} />
+        {taskBusy ? '每 1.2 秒同步实时日志；升级期间请勿重复提交或关闭服务器' : lastTask?.message || '任务已结束'}
+      </div>
+    </Card>
+  ) : null;
+
   return (
     <div className="crud-page upgrade-page">
       <div className="upgrade-page__header">
@@ -1640,6 +1806,8 @@ export default function UpgradeConfigPage() {
             </div>
           </div>
         </section>
+
+        {versionProgressPanel}
 
         <Row className="upgrade-page__overview-grid" gutter={[16, 16]}>
           <Col xs={24} lg={8}>
@@ -1774,7 +1942,7 @@ export default function UpgradeConfigPage() {
         footer={
           <Space>
             <Button onClick={() => setInstallOpen(false)}>关闭</Button>
-            <Button icon={<ReloadOutlined />} loading={logsLoading} onClick={loadUpdaterLogs}>
+            <Button icon={<ReloadOutlined />} loading={logsLoading} onClick={() => loadUpdaterLogs(false)}>
               刷新日志
             </Button>
             <Button

@@ -8,6 +8,14 @@ export interface UpdaterLastTask {
   /** RUNNING/SUCCESS/FAILED */
   state?: string;
   message?: string;
+  /** 当前进度百分比：0-100 */
+  progress?: number;
+  /** 当前执行阶段 */
+  phase?: string;
+  /** 开始时间 */
+  startedAt?: string;
+  /** 最近进度更新时间 */
+  updatedAt?: string;
   finishedAt?: string;
 }
 
@@ -32,6 +40,22 @@ export interface UpdaterStatus {
   lastTask?: UpdaterLastTask;
   /** 升级器实际加载的脱敏部署配置 */
   deploymentConfig?: DeploymentConfig;
+}
+
+/** 在线升级使用的服务器CPU与内存快照 */
+export interface UpgradeHostResources {
+  /** 操作系统可用逻辑处理器数量 */
+  cpuCores?: number;
+  /** 操作系统可见总内存，单位字节 */
+  totalMemoryBytes?: number;
+  /** 触发高风险提醒的CPU核数上限 */
+  warningCpuCores?: number;
+  /** 触发高风险提醒的内存上限，单位字节 */
+  warningMemoryBytes?: number;
+  /** 是否完整检测到CPU与内存 */
+  detected: boolean;
+  /** 是否属于在线升级高风险配置 */
+  onlineUpgradeRisk: boolean;
 }
 
 /** Docker/systemd 共用的部署运行配置（密钥原文永不回显） */
@@ -125,6 +149,8 @@ export interface UpgradeStatus {
   manifestUrl?: string;
   updaterDownloadUrl?: string;
   updater?: UpdaterStatus;
+  /** 在线源码构建使用的服务器资源快照 */
+  hostResources?: UpgradeHostResources;
   officialApi?: OfficialApiStatus;
   /** 发布清单允许的近期回退版本 */
   rollbackReleases?: RollbackRelease[];
