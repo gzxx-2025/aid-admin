@@ -818,9 +818,10 @@ export default function AidconfigPage() {
               <div>
                 <strong>本地存储配置示例</strong>
                 <span>
-                  访问域名填写 https://api.example.com，不加 /profile；公共访问域名填写
-                  https://api.example.com/profile。只有初始化 SQL 中 /aid/... 的官方资源需要公共域名带
-                  /profile，新上传文件会自动拼接 /profile/upload/...，不要重复添加。
+                  站点访问域名可以留空，此时使用当前站点的相对地址；配置域名时填写
+                  https://api.example.com，不要添加 /profile。普通上传会自动生成
+                  /profile/upload/...，初始化数据中的 /aid/... 官方资源会自动映射为
+                  /profile/aid/...，本地模式无需再配置 CDN 域名。
                 </span>
               </div>
             </div>

@@ -165,7 +165,7 @@ export const CATEGORY_FIELD_LABELS: Record<string, Record<string, string>> = {
     maxBatchCount: '单次最多上传数量',
     imageUrlWhitelist: '图片URL域名白名单',
     // ===== 本地存储 =====
-    localDomain: '访问域名',
+    localDomain: '站点访问域名（可选）',
     // ===== 阿里云 OSS（凭证类改后需重启）=====
     endpoint: 'OSS Endpoint',
     accessKeyId: 'AccessKey ID',
@@ -391,7 +391,7 @@ export const PROVIDER_SPECIFIC_FIELDS: Record<string, { common: string[]; [key: 
   },
   // 文件存储：按"存储模式(uploadMode)"动态显示字段。
   // 公共字段（顶部）：所有模式共用的开关与限制项。
-  // 模式字段（底部）：凭证按服务商隔离，公共访问域名由各模式共用。
+  // 模式字段（底部）：凭证按服务商隔离；云存储共用公共访问域名。
   oss: {
     common: [
       'enabled',
@@ -402,8 +402,8 @@ export const PROVIDER_SPECIFIC_FIELDS: Record<string, { common: string[]; [key: 
       'maxBatchCount',
       'imageUrlWhitelist'
     ],
-    // 本地存储模式：新上传文件走 localDomain，初始化资源走 cdnDomain。
-    local: ['localDomain', 'cdnDomain'],
+    // 本地存储只需一个站点域名；官方资源地址由后端自动派生为 localDomain + /profile。
+    local: ['localDomain'],
     // 阿里云OSS 模式
     oss: ['endpoint', 'accessKeyId', 'accessKeySecret', 'bucketName', 'prefix', 'cdnDomain'],
     // 腾讯云COS 模式
