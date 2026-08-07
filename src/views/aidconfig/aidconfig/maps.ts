@@ -172,14 +172,19 @@ export const CATEGORY_FIELD_LABELS: Record<string, Record<string, string>> = {
     accessKeySecret: 'AccessKey Secret',
     bucketName: 'Bucket 名称',
     prefix: '路径前缀',
-    cdnDomain: '访问域名（CDN）',
+    cdnDomain: '公共访问域名（CDN）',
     // ===== 腾讯云 COS（去掉 COS 前缀；凭证类改后需重启）=====
     cosRegion: '地域 (Region)',
     cosSecretId: 'SecretId',
     cosSecretKey: 'SecretKey',
     cosBucketName: 'Bucket 名称',
     cosPrefix: '路径前缀',
-    cosCdnDomain: '访问域名（CDN）'
+    cosCdnDomain: 'COS 源站域名（可选）',
+    // ===== 七牛云 Kodo =====
+    qiniuAccessKey: 'AccessKey',
+    qiniuSecretKey: 'SecretKey',
+    qiniuBucketName: 'Bucket 名称',
+    qiniuPrefix: '路径前缀'
   },
   captcha: {
     enabled: '是否启用',
@@ -307,7 +312,11 @@ export const CONFIG_NAME_MAP: Record<string, string> = {
   cosSecretKey: 'SecretKey',
   cosBucketName: 'Bucket 名称',
   cosPrefix: '路径前缀',
-  cosCdnDomain: 'CDN 域名',
+  cosCdnDomain: 'COS 源站域名',
+  qiniuAccessKey: '七牛云 AccessKey',
+  qiniuSecretKey: '七牛云 SecretKey',
+  qiniuBucketName: '七牛云 Bucket 名称',
+  qiniuPrefix: '七牛云路径前缀',
   // agent_model 类
   text_economy_model_code: '文字模型 · 经济模式',
   text_performance_model_code: '文字模型 · 性能模式',
@@ -342,6 +351,7 @@ export const SELECT_FIELD_OPTIONS: Record<string, Array<{ label: string; value: 
   uploadMode: [
     { label: '阿里云OSS', value: 'oss' },
     { label: '腾讯云COS', value: 'cos' },
+    { label: '七牛云Kodo', value: 'qiniu' },
     { label: '本地存储', value: 'local' }
   ]
 };
@@ -366,14 +376,7 @@ export const NON_SENSITIVE_FIELDS = ['publicKeyId'];
 /** 服务商相关配置项 */
 export const PROVIDER_SPECIFIC_FIELDS: Record<string, { common: string[]; [key: string]: string[] }> = {
   sms: {
-    common: [
-      'enabled',
-      'providerType',
-      'code_length',
-      'code_expire_minutes',
-      'send_interval_seconds',
-      'daily_limit'
-    ],
+    common: ['enabled', 'providerType', 'code_length', 'code_expire_minutes', 'send_interval_seconds', 'daily_limit'],
     aliyun: ['endpoint', 'accessKeyId', 'accessKeySecret', 'signName', 'defaultTemplateId', 'codeParamName'],
     tencent: [
       'endpoint',
@@ -388,8 +391,7 @@ export const PROVIDER_SPECIFIC_FIELDS: Record<string, { common: string[]; [key: 
   },
   // 文件存储：按"存储模式(uploadMode)"动态显示字段。
   // 公共字段（顶部）：所有模式共用的开关与限制项。
-  // 模式字段（底部）：阿里云OSS / 腾讯云COS / 本地存储 三套字段互不干扰，
-  //   每种模式只展示「一个」访问域名字段（云模式=CDN域名，本地=本地访问域名），避免重复维护。
+  // 模式字段（底部）：凭证按服务商隔离，公共访问域名由各模式共用。
   oss: {
     common: [
       'enabled',
@@ -400,12 +402,14 @@ export const PROVIDER_SPECIFIC_FIELDS: Record<string, { common: string[]; [key: 
       'maxBatchCount',
       'imageUrlWhitelist'
     ],
-    // 本地存储模式：本地访问域名
-    local: ['localDomain'],
+    // 本地存储模式：新上传文件走 localDomain，初始化资源走 cdnDomain。
+    local: ['localDomain', 'cdnDomain'],
     // 阿里云OSS 模式
     oss: ['endpoint', 'accessKeyId', 'accessKeySecret', 'bucketName', 'prefix', 'cdnDomain'],
     // 腾讯云COS 模式
-    cos: ['cosRegion', 'cosSecretId', 'cosSecretKey', 'cosBucketName', 'cosPrefix', 'cosCdnDomain']
+    cos: ['cosRegion', 'cosSecretId', 'cosSecretKey', 'cosBucketName', 'cosPrefix', 'cosCdnDomain', 'cdnDomain'],
+    // 七牛云 Kodo 模式
+    qiniu: ['qiniuAccessKey', 'qiniuSecretKey', 'qiniuBucketName', 'qiniuPrefix', 'cdnDomain']
   }
 };
 

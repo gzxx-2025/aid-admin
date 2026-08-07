@@ -125,6 +125,14 @@ const REQUIRED_SMS_BAO_FIELDS = [
   }
 ];
 
+/** 数据库缺失时注入的七牛云 Kodo 配置项。 */
+const REQUIRED_QINIU_FIELDS = [
+  { id: -421, configName: 'qiniuAccessKey', configDict: '七牛云AccessKey', configValue: '', orderNum: 20 },
+  { id: -422, configName: 'qiniuSecretKey', configDict: '七牛云SecretKey', configValue: '', orderNum: 21 },
+  { id: -423, configName: 'qiniuBucketName', configDict: '七牛云Bucket名称', configValue: '', orderNum: 22 },
+  { id: -424, configName: 'qiniuPrefix', configDict: '七牛云路径前缀', configValue: 'upload', orderNum: 23 }
+];
+
 /** 后台配置页隐藏的分类（不在左侧分区显示，也不走未收纳兜底）。 */
 const HIDDEN_CATEGORIES = new Set<string>(['realAuth', 'system_upgrade', 'official_gateway']);
 
@@ -258,6 +266,7 @@ export default function AidconfigPage() {
 
       ensureFields(BASIC_CATEGORY, REQUIRED_BASIC_FIELDS);
       ensureFields('sms', REQUIRED_SMS_BAO_FIELDS);
+      ensureFields('oss', REQUIRED_QINIU_FIELDS);
       // 模型基础倍率是计费必填项。数据库尚未初始化时也提供可保存的页面占位项；说明固定写在页面，不落 configDict。
       let mediaGroup = list.find((g) => g.category === 'media');
       if (!mediaGroup) {
@@ -424,6 +433,12 @@ export default function AidconfigPage() {
       ? currentGroup?.items.find((item) => item.configName === 'providerType')?.configValue || 'aliyun'
       : '';
 
+  /** 当前存储模式，用于展示不易误配的域名示例。 */
+  const currentStorageMode =
+    activeCategory === 'oss'
+      ? currentGroup?.items.find((item) => item.configName === 'uploadMode')?.configValue || 'oss'
+      : '';
+
   // 整组项（含被隐藏的镜像字段，如 cdnDomain/cosCdnDomain），用于"已修改"统计与保存
   const groupItems = currentGroup?.items || [];
   const modifiedCount = groupItems.filter((it) => it._modified).length;
@@ -569,9 +584,12 @@ export default function AidconfigPage() {
     const values = await smsTestForm.validateFields();
     setTesting(true);
     try {
-      const res: any = await testSmsSend({ phone: values.phone, code: values.code || '1234' });
+      const res: any = await testSmsSend({
+        phone: values.phone,
+        code: values.code?.trim() || undefined
+      });
       if (res.code === 200 || res.success) {
-        message.success(res.msg || '测试短信发送成功');
+        message.info(res.msg || '短信请求已受理，请核对送达');
         setSmsTestOpen(false);
       } else {
         message.error(res.msg || '测试短信发送失败');
@@ -785,11 +803,45 @@ export default function AidconfigPage() {
             <div className="config-page__provider-note">
               <div>
                 <strong>短信宝 · 轻量 HTTP 短信通道</strong>
-                <span>签名与验证码文案由本平台维护，连接测试使用余额查询接口，不会发送短信。</span>
+                <span>
+                  接口返回 0 仅表示短信宝已受理，并不代表手机已送达。首次使用请先在短信宝报备 VIP
+                  模板；不要向同一手机号连续发送完全相同的测试内容。
+                </span>
               </div>
               <a href="https://www.smsbao.com" target="_blank" rel="noreferrer">
                 <LinkOutlined /> smsbao.com
               </a>
+            </div>
+          )}
+          {activeCategory === 'oss' && currentStorageMode === 'local' && (
+            <div className="config-page__provider-note">
+              <div>
+                <strong>本地存储配置示例</strong>
+                <span>
+                  访问域名填写 https://api.example.com，不加 /profile；公共访问域名填写
+                  https://api.example.com/profile。只有初始化 SQL 中 /aid/... 的官方资源需要公共域名带
+                  /profile，新上传文件会自动拼接 /profile/upload/...，不要重复添加。
+                </span>
+              </div>
+            </div>
+          )}
+          {activeCategory === 'oss' && currentStorageMode && currentStorageMode !== 'local' && (
+            <div className="config-page__provider-note">
+              <div>
+                <strong>
+                  {currentStorageMode === 'qiniu'
+                    ? '七牛云 Kodo'
+                    : currentStorageMode === 'cos'
+                      ? '腾讯云 COS'
+                      : '阿里云 OSS'}{' '}
+                  配置提示
+                </strong>
+                <span>
+                  公共访问域名示例：https://cdn.example.com，通常不加 /profile。只有 CDN
+                  回源配置本身带固定路径时才填写该路径。官方资源应位于 Bucket 根目录的
+                  aid/...；路径前缀只用于后续新上传文件，可留空。
+                </span>
+              </div>
             </div>
           )}
           {isImageModeration ? (
@@ -891,7 +943,7 @@ export default function AidconfigPage() {
         destroyOnClose
       >
         <div style={{ color: '#64748b', fontSize: 12, marginBottom: 12 }}>
-          将使用当前已同步的短信渠道向目标手机号发送测试验证码；短信宝使用后台配置的内容模板。
+          将使用当前已同步的短信渠道向目标手机号发送测试验证码；短信宝返回“已受理”不等于运营商已送达。
         </div>
         <Form form={smsTestForm} layout="vertical">
           <Form.Item
@@ -904,7 +956,7 @@ export default function AidconfigPage() {
           >
             <Input placeholder="接收测试短信的手机号" />
           </Form.Item>
-          <Form.Item name="code" label="验证码" extra="可选，留空默认使用 1234">
+          <Form.Item name="code" label="验证码" extra="可选，留空自动生成随机 6 位数字，避免固定测试内容被拦截">
             <Input placeholder="4-6 位数字" maxLength={6} />
           </Form.Item>
         </Form>

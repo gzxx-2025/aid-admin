@@ -12,7 +12,8 @@ import {
   Switch,
   Table,
   Tag,
-  Tooltip
+  Tooltip,
+  message
 } from 'antd'
 import {
   FileSearchOutlined,
@@ -21,20 +22,26 @@ import {
   SearchOutlined,
   ThunderboltOutlined
 } from '@ant-design/icons'
-import { ErrorLog, listErrorLog } from '@/api/aid/errorlog'
-import { listProvider } from '@/api/aid/aimanage'
-import { useNavigate } from 'react-router-dom'
+import {
+  convertErrorLogToRule,
+  ErrorLog,
+  getErrorRuleDraft,
+  listErrorLog
+} from '@/api/aid/errorlog'
+import { listTaskErrorCodes, ProviderErrorRule, TaskErrorCodeOption } from '@/api/aid/errorrule'
+import { listModel, listProvider } from '@/api/aid/aimanage'
+import Auth from '@/components/Auth'
+import { checkPermi } from '@/hooks/useAuth'
+import RuleDialog from '@/views/aid/errorrule/RuleDialog'
 
 /**
  * 未识别错误 / 错误样本日志。
  * <p>
  * 默认只展示未识别的样本（matched_rule_id IS NULL），按出现次数排序。
- * 点"基于此创建规则"跳到错误规则页，预填好关键字。
+ * 点"基于此创建规则"直接打开规则编辑器，保存后同步标记来源样本。
  * </p>
  */
 export default function ErrorLogPage() {
-  const navigate = useNavigate()
-
   const [loading, setLoading] = useState(false)
   const [list, setList] = useState<ErrorLog[]>([])
   const [total, setTotal] = useState(0)
@@ -44,16 +51,40 @@ export default function ErrorLogPage() {
   const [detailOpen, setDetailOpen] = useState(false)
   const [detail, setDetail] = useState<ErrorLog | null>(null)
   const [providers, setProviders] = useState<{ providerCode: string; providerName: string }[]>([])
+  const [models, setModels] = useState<
+    { modelCode: string; modelName: string; providerCode?: string }[]
+  >([])
+  const [errorCodes, setErrorCodes] = useState<TaskErrorCodeOption[]>([])
+  const [ruleDialogOpen, setRuleDialogOpen] = useState(false)
+  const [ruleDraft, setRuleDraft] = useState<ProviderErrorRule | null>(null)
+  const [convertingLogId, setConvertingLogId] = useState<number | null>(null)
+  const [conversionLoadingId, setConversionLoadingId] = useState<number | null>(null)
 
-  const loadProviders = async () => {
+  const loadDictData = async () => {
     try {
-      const res: any = await listProvider({ pageNum: 1, pageSize: 999, status: '0' })
-      setProviders((res?.rows || []).map((p: any) => ({
+      const providerRes: any = await listProvider({ pageNum: 1, pageSize: 999, status: '0' })
+      const providerList = providerRes?.rows || []
+      setProviders(providerList.map((p: any) => ({
         providerCode: p.providerCode,
         providerName: p.providerName
       })))
+      if (!checkPermi('aid:errorlog:convert')) {
+        return
+      }
+      const [modelRes, errorCodeRes]: any[] = await Promise.all([
+        listModel({ pageNum: 1, pageSize: 999, status: '0' }),
+        listTaskErrorCodes()
+      ])
+      const providerIdToCode = new Map<number, string>()
+      providerList.forEach((p: any) => providerIdToCode.set(p.id, p.providerCode))
+      setModels((modelRes?.rows || []).map((model: any) => ({
+        modelCode: model.modelCode,
+        modelName: model.modelName,
+        providerCode: providerIdToCode.get(model.providerId)
+      })))
+      setErrorCodes(errorCodeRes?.data || [])
     } catch {
-      // ignore
+      message.error('规则选项加载失败')
     }
   }
 
@@ -69,7 +100,7 @@ export default function ErrorLogPage() {
   }
 
   useEffect(() => {
-    loadProviders()
+    loadDictData()
   }, [])
 
   useEffect(() => {
@@ -87,16 +118,31 @@ export default function ErrorLogPage() {
     setQuery({ pageNum: 1, pageSize: query.pageSize, onlyUnmatched: true })
   }
 
-  const handleConvertToRule = (row: ErrorLog) => {
-    // 把样本作为关键字预填到新建规则页（通过 query string 传递）
-    const params = new URLSearchParams()
-    if (row.providerCode) params.set('providerCode', row.providerCode)
-    if (row.modelCode) params.set('modelCode', row.modelCode)
-    // 取前 80 字作为初始 matchPattern 提示
-    const sample = (row.rawMessage || '').slice(0, 80)
-    params.set('matchPattern', sample)
-    params.set('matchType', 'KEYWORD')
-    navigate(`/aid/errorrule?${params.toString()}`)
+  const handleConvertToRule = async (row: ErrorLog) => {
+    setConversionLoadingId(row.id)
+    try {
+      const res: any = await getErrorRuleDraft(row.id)
+      setRuleDraft(res?.data || null)
+      setConvertingLogId(row.id)
+      setDetailOpen(false)
+      setRuleDialogOpen(true)
+    } finally {
+      setConversionLoadingId(null)
+    }
+  }
+
+  const handleSaveRule = async (rule: ProviderErrorRule) => {
+    if (!convertingLogId) {
+      message.error('错误样本不存在')
+      return
+    }
+    await convertErrorLogToRule({ errorLogId: convertingLogId, rule })
+    message.success('规则创建成功')
+    setRuleDialogOpen(false)
+    setRuleDraft(null)
+    setConvertingLogId(null)
+    setDetail(null)
+    await loadList()
   }
 
   const columns: any[] = [
@@ -171,14 +217,17 @@ export default function ErrorLogPage() {
             详情
           </Button>
           {!r.matchedRuleId && (
-            <Button
-              size="small"
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => handleConvertToRule(r)}
-            >
-              转为规则
-            </Button>
+            <Auth permission="aid:errorlog:convert">
+              <Button
+                size="small"
+                type="primary"
+                icon={<PlusOutlined />}
+                loading={conversionLoadingId === r.id}
+                onClick={() => handleConvertToRule(r)}
+              >
+                转为规则
+              </Button>
+            </Auth>
           )}
         </Space>
       )
@@ -287,13 +336,34 @@ export default function ErrorLogPage() {
               )}
             </p>
             {!detail.matchedRuleId && (
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => handleConvertToRule(detail)}>
-                基于此创建规则
-              </Button>
+              <Auth permission="aid:errorlog:convert">
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  loading={conversionLoadingId === detail.id}
+                  onClick={() => handleConvertToRule(detail)}
+                >
+                  基于此创建规则
+                </Button>
+              </Auth>
             )}
           </div>
         )}
       </Modal>
+
+      <RuleDialog
+        open={ruleDialogOpen}
+        editing={ruleDraft}
+        errorCodes={errorCodes}
+        providers={providers}
+        models={models}
+        onCancel={() => {
+          setRuleDialogOpen(false)
+          setRuleDraft(null)
+          setConvertingLogId(null)
+        }}
+        onSave={handleSaveRule}
+      />
     </div>
   )
 }

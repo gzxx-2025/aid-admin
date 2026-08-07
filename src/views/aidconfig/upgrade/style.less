@@ -64,7 +64,10 @@
     border: 1px solid @border-color;
     border-radius: 10px;
     box-shadow: 0 4px 14px rgb(15 23 42 / 4%);
-    transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+    transition:
+      border-color 0.2s,
+      box-shadow 0.2s,
+      transform 0.2s;
 
     &:hover {
       border-color: fade(@primary-color, 35%);
@@ -422,7 +425,9 @@
       background: @bg-card;
       border: 1px solid @border-color;
       border-radius: 6px;
-      transition: border-color 0.2s, background-color 0.2s;
+      transition:
+        border-color 0.2s,
+        background-color 0.2s;
 
       &:hover {
         background: #f8fafc;
@@ -550,6 +555,30 @@
   &__modal-alert {
     margin-bottom: 16px;
     border-radius: 6px;
+  }
+
+  &__assets-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 16px 0 12px;
+  }
+
+  &__assets-release-links {
+    margin-bottom: 10px;
+  }
+
+  &__assets-command {
+    margin-bottom: 8px !important;
+
+    code {
+      display: block;
+      max-width: 100%;
+      padding: 10px 12px;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
   }
 
   &__confirm-input {

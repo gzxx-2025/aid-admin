@@ -208,6 +208,47 @@ export interface UpdaterLog {
   message?: string;
 }
 
+/** 官方资源包初始化状态 */
+export interface OfficialAssetsStatus {
+  initialized: boolean;
+  fileCount: number;
+  totalBytes: number;
+  targetDirectory: string;
+  recommendedArchiveName: string;
+  maxUploadBytes: number;
+  manualCommand: string;
+  message?: string;
+}
+
+/** 查询官方资源包初始化状态 */
+export function getOfficialAssetsStatus() {
+  return request<OfficialAssetsStatus>({
+    url: '/aidconfig/upgrade/official-assets/status',
+    method: 'get'
+  });
+}
+
+/** 上传并初始化官方资源包 */
+export function installOfficialAssets(file: File, onProgress?: (percent: number) => void) {
+  const formData = new FormData();
+  formData.append('file', file, file.name);
+  return request<OfficialAssetsStatus>({
+    url: '/aidconfig/upgrade/official-assets/install',
+    method: 'post',
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data',
+      repeatSubmit: false
+    },
+    timeout: 30 * 60 * 1000,
+    onUploadProgress: (event) => {
+      if (event.total && onProgress) {
+        onProgress(Math.min(99, Math.round((event.loaded * 100) / event.total)));
+      }
+    }
+  });
+}
+
 /** 查询升级器最近运行日志 */
 export function getUpdaterLogs() {
   return request<UpdaterLog>({

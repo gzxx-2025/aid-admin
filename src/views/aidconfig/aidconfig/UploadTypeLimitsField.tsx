@@ -6,7 +6,7 @@ import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
  * oss.uploadTypeLimits 分类型上传限制编辑器（表单 → JSON，运营无需手写 JSON）。
  *
  * 值是一段 JSON 数组字符串，落库到 aid_config(category=oss, config_name=uploadTypeLimits)，
- * 与本地/OSS/COS 三种存储模式共用（公共字段）。每个元素：
+ * 与本地、OSS、COS、七牛云存储模式共用（公共字段）。每个元素：
  *   { "name": "图片", "maxSizeMb": 10, "extensions": ["jpg","jpeg","png"] }
  * 后端 OssConfigManager 解析后按文件后缀命中类型校验单文件大小，单位 MB。
  * 编辑后随「保存配置」一起入库，再点「同步配置」刷新 OSS 缓存即时生效。

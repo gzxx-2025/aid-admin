@@ -11,6 +11,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Progress,
   Radio,
   Row,
   Select,
@@ -19,6 +20,7 @@ import {
   Tabs,
   Tag,
   Typography,
+  Upload,
   message
 } from 'antd';
 import {
@@ -31,6 +33,7 @@ import {
   ExclamationCircleOutlined,
   FileTextOutlined,
   HistoryOutlined,
+  InboxOutlined,
   ReloadOutlined,
   RocketOutlined,
   SaveOutlined,
@@ -44,6 +47,7 @@ import {
   DeploymentConfig,
   DeploymentConfigSaveParams,
   getDeploymentConfig,
+  getOfficialAssetsStatus,
   getUpdaterLogs,
   getUpgradeSource,
   rollbackDeploymentConfig,
@@ -51,14 +55,24 @@ import {
   saveUpgradeSource,
   startUpdaterUpgrade,
   startUpgrade,
+  installOfficialAssets,
   validateDeploymentConfig,
   UpdaterLog,
+  OfficialAssetsStatus,
   UpgradeSourceSetting
 } from '@/api/aidconfig/upgrade';
 import { useUpgradeStore } from '@/store/useUpgradeStore';
 import './style.less';
 
 const { Paragraph, Text } = Typography;
+
+const formatBytes = (value?: number): string => {
+  const bytes = Number(value || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GiB`;
+};
 
 const UPDATER_TAG: Record<string, { color: string; text: string }> = {
   AVAILABLE: { color: 'green', text: '运行正常' },
@@ -129,22 +143,26 @@ const TASK_STATE_META: Record<string, { alert: 'info' | 'success' | 'error'; tex
   FAILED: { alert: 'error', text: '失败' }
 };
 
-const taskKey = (task?: {
-  taskId?: string;
-  action?: string;
-  state?: string;
-  finishedAt?: string;
-}) => [task?.taskId, task?.action, task?.state, task?.finishedAt].filter(Boolean).join('|');
+const taskKey = (task?: { taskId?: string; action?: string; state?: string; finishedAt?: string }) =>
+  [task?.taskId, task?.action, task?.state, task?.finishedAt].filter(Boolean).join('|');
 
 const renderInlineReleaseText = (text: string, keyPrefix: string): React.ReactNode[] => {
   const parts = text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/g).filter(Boolean);
   return parts.map((part, index) => {
     const key = `${keyPrefix}-${index}`;
     if (part.startsWith('`') && part.endsWith('`')) {
-      return <Text code key={key}>{part.slice(1, -1)}</Text>;
+      return (
+        <Text code key={key}>
+          {part.slice(1, -1)}
+        </Text>
+      );
     }
     if (part.startsWith('**') && part.endsWith('**')) {
-      return <Text strong key={key}>{part.slice(2, -2)}</Text>;
+      return (
+        <Text strong key={key}>
+          {part.slice(2, -2)}
+        </Text>
+      );
     }
     return <React.Fragment key={key}>{part}</React.Fragment>;
   });
@@ -165,9 +183,12 @@ const renderReleaseNotes = (markdown: string): React.ReactNode[] => {
     const heading = line.match(/^(#{1,3})\s+(.+)$/);
     if (heading) {
       const level = heading[1].length;
-      const HeadingTag = (`h${Math.min(level + 2, 6)}`) as keyof React.JSX.IntrinsicElements;
+      const HeadingTag = `h${Math.min(level + 2, 6)}` as keyof React.JSX.IntrinsicElements;
       nodes.push(
-        <HeadingTag className={`upgrade-page__release-heading upgrade-page__release-heading--${level}`} key={`heading-${index}`}>
+        <HeadingTag
+          className={`upgrade-page__release-heading upgrade-page__release-heading--${level}`}
+          key={`heading-${index}`}
+        >
           {renderInlineReleaseText(heading[2], `heading-${index}`)}
         </HeadingTag>
       );
@@ -183,7 +204,11 @@ const renderReleaseNotes = (markdown: string): React.ReactNode[] => {
         items.push(<li key={`item-${index}`}>{renderInlineReleaseText(item[1], `item-${index}`)}</li>);
         index += 1;
       }
-      nodes.push(<ul className="upgrade-page__release-list" key={`list-${index}`}>{items}</ul>);
+      nodes.push(
+        <ul className="upgrade-page__release-list" key={`list-${index}`}>
+          {items}
+        </ul>
+      );
       continue;
     }
 
@@ -221,6 +246,11 @@ export default function UpgradeConfigPage() {
   const [deploymentLoading, setDeploymentLoading] = useState(true);
   const [deploymentSaving, setDeploymentSaving] = useState(false);
   const [deploymentDirty, setDeploymentDirty] = useState(false);
+  const [assetsStatus, setAssetsStatus] = useState<OfficialAssetsStatus | null>(null);
+  const [assetsLoading, setAssetsLoading] = useState(true);
+  const [assetsInstalling, setAssetsInstalling] = useState(false);
+  const [assetsUploadProgress, setAssetsUploadProgress] = useState(0);
+  const [assetsFile, setAssetsFile] = useState<File | null>(null);
   const [rollbackVersion, setRollbackVersion] = useState<string>();
   const [rollbackConfirmOpen, setRollbackConfirmOpen] = useState(false);
   const [rollbackConfirmText, setRollbackConfirmText] = useState('');
@@ -233,10 +263,10 @@ export default function UpgradeConfigPage() {
   const [sourceForm] = Form.useForm<UpgradeSourceSetting>();
   const [deploymentForm] = Form.useForm<DeploymentConfigSaveParams>();
   const composeProfiles = Form.useWatch('composeProfiles', deploymentForm) || '';
-  const usesInternalMysql = deploymentConfig?.mode === 'docker'
-    && composeProfiles.split(',').some((item) => item.trim() === 'mysql');
-  const usesInternalRocketmq = deploymentConfig?.mode === 'docker'
-    && composeProfiles.split(',').some((item) => item.trim() === 'mq');
+  const usesInternalMysql =
+    deploymentConfig?.mode === 'docker' && composeProfiles.split(',').some((item) => item.trim() === 'mysql');
+  const usesInternalRocketmq =
+    deploymentConfig?.mode === 'docker' && composeProfiles.split(',').some((item) => item.trim() === 'mq');
 
   const updater = status?.updater;
   const updaterTag = UPDATER_TAG[updater?.status || 'UNKNOWN'] || UPDATER_TAG.UNKNOWN;
@@ -245,17 +275,20 @@ export default function UpgradeConfigPage() {
   const lastTaskMeta = lastTask?.state ? TASK_STATE_META[lastTask.state] : undefined;
   const selectedRollback = status?.rollbackReleases?.find((item) => item.version === rollbackVersion);
 
-  const loadStatus = useCallback(async (force: boolean) => {
-    const next = await loadStatusShared(force);
-    if (force) {
-      if (next?.checkError) {
-        message.warning('检查完成，更新源当前不可用');
-      } else {
-        message.success('检查完成');
+  const loadStatus = useCallback(
+    async (force: boolean) => {
+      const next = await loadStatusShared(force);
+      if (force) {
+        if (next?.checkError) {
+          message.warning('检查完成，更新源当前不可用');
+        } else {
+          message.success('检查完成');
+        }
       }
-    }
-    return next;
-  }, [loadStatusShared]);
+      return next;
+    },
+    [loadStatusShared]
+  );
 
   const loadSource = useCallback(async () => {
     setSourceLoading(true);
@@ -303,13 +336,26 @@ export default function UpgradeConfigPage() {
     }
   }, []);
 
+  const loadAssetsStatus = useCallback(async () => {
+    setAssetsLoading(true);
+    try {
+      const res = await getOfficialAssetsStatus();
+      setAssetsStatus(res.data || null);
+    } catch {
+      setAssetsStatus(null);
+    } finally {
+      setAssetsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!useUpgradeStore.getState().status) {
       loadStatus(false).catch(() => undefined);
     }
     loadSource();
     loadDeployment();
-  }, [loadDeployment, loadSource, loadStatus]);
+    loadAssetsStatus();
+  }, [loadAssetsStatus, loadDeployment, loadSource, loadStatus]);
 
   useEffect(() => {
     if (installOpen) {
@@ -485,6 +531,36 @@ export default function UpgradeConfigPage() {
     }
   };
 
+  const handleInstallAssets = async () => {
+    if (!assetsFile) {
+      message.warning('请先选择资源包');
+      return;
+    }
+    const fileName = assetsFile.name.toLowerCase();
+    if (!fileName.endsWith('.tar') && !fileName.endsWith('.tar.gz')) {
+      message.warning('仅支持 tar 资源包');
+      return;
+    }
+    if (assetsStatus?.maxUploadBytes && assetsFile.size > assetsStatus.maxUploadBytes) {
+      message.warning(`资源包不能超过 ${formatBytes(assetsStatus.maxUploadBytes)}`);
+      return;
+    }
+
+    setAssetsInstalling(true);
+    setAssetsUploadProgress(0);
+    try {
+      const res = await installOfficialAssets(assetsFile, setAssetsUploadProgress);
+      setAssetsStatus(res.data || null);
+      setAssetsUploadProgress(100);
+      setAssetsFile(null);
+      message.success(res.msg || '官方资源初始化成功');
+    } catch {
+      message.error('上传失败，请使用下方命令安装');
+    } finally {
+      setAssetsInstalling(false);
+    }
+  };
+
   const releaseLinks = (
     <Space className="upgrade-page__release-links" wrap size={[16, 8]}>
       {status?.giteeReleaseUrl && (
@@ -531,7 +607,12 @@ export default function UpgradeConfigPage() {
       <Card
         className="upgrade-page__release-card"
         bordered={false}
-        title={<Space size={8}><FileTextOutlined /><span>版本说明</span></Space>}
+        title={
+          <Space size={8}>
+            <FileTextOutlined />
+            <span>版本说明</span>
+          </Space>
+        }
       >
         <div className="upgrade-page__release-meta">
           <div>
@@ -591,7 +672,11 @@ export default function UpgradeConfigPage() {
           showIcon
           message={`更新源不可用：${status.checkError}`}
           description="请检查服务器网络和升级配置，恢复后重新检查。"
-          action={<Button size="small" loading={checking} onClick={() => loadStatus(true)}>重新检查</Button>}
+          action={
+            <Button size="small" loading={checking} onClick={() => loadStatus(true)}>
+              重新检查
+            </Button>
+          }
         />
       );
     }
@@ -602,7 +687,11 @@ export default function UpgradeConfigPage() {
           showIcon
           message="请先升级升级器"
           description={`系统 v${status.latestVersion || '-'} 与升级器 v${updater.latestVersion || '-'} 均有更新。为保证SQL、备份和回滚协议兼容，必须先完成升级器更新。`}
-          action={<Button type="primary" onClick={handleUpgradeUpdater}>先升级升级器</Button>}
+          action={
+            <Button type="primary" onClick={handleUpgradeUpdater}>
+              先升级升级器
+            </Button>
+          }
         />
       );
     }
@@ -682,14 +771,20 @@ export default function UpgradeConfigPage() {
       </div>
 
       <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 4 }}>
-        <Descriptions.Item label="运行状态"><Tag color={updaterTag.color}>{updaterTag.text}</Tag></Descriptions.Item>
+        <Descriptions.Item label="运行状态">
+          <Tag color={updaterTag.color}>{updaterTag.text}</Tag>
+        </Descriptions.Item>
         <Descriptions.Item label="部署方式">
           {updater?.serviceManager === 'docker'
             ? 'Docker'
-            : updater?.serviceManager === 'systemd' ? 'systemd' : '未上报'}
+            : updater?.serviceManager === 'systemd'
+              ? 'systemd'
+              : '未上报'}
         </Descriptions.Item>
         <Descriptions.Item label="当前版本">{updater?.version ? `v${updater.version}` : '-'}</Descriptions.Item>
-        <Descriptions.Item label="最新版本">{updater?.latestVersion ? `v${updater.latestVersion}` : '-'}</Descriptions.Item>
+        <Descriptions.Item label="最新版本">
+          {updater?.latestVersion ? `v${updater.latestVersion}` : '-'}
+        </Descriptions.Item>
       </Descriptions>
 
       {lastTask && lastTaskMeta && (
@@ -794,11 +889,7 @@ export default function UpgradeConfigPage() {
           {sourceDirty && <Tag color="gold">有未保存修改</Tag>}
         </Space>
         <Space>
-          <Button
-            icon={<ReloadOutlined />}
-            disabled={sourceLoading || sourceSaving}
-            onClick={loadSource}
-          >
+          <Button icon={<ReloadOutlined />} disabled={sourceLoading || sourceSaving} onClick={loadSource}>
             重新加载
           </Button>
           <Button
@@ -819,7 +910,11 @@ export default function UpgradeConfigPage() {
           showIcon
           message="升级配置加载失败"
           description="为避免覆盖现有配置，数据恢复前已禁止保存。"
-          action={<Button size="small" onClick={loadSource}>重试</Button>}
+          action={
+            <Button size="small" onClick={loadSource}>
+              重试
+            </Button>
+          }
         />
       )}
 
@@ -908,9 +1003,15 @@ export default function UpgradeConfigPage() {
           {deploymentDirty && <Tag color="gold">有未应用修改</Tag>}
         </Space>
         <Space wrap>
-          <Button icon={<ReloadOutlined />} loading={deploymentLoading} onClick={loadDeployment}>重新加载</Button>
-          <Button disabled={!deploymentConfig} loading={deploymentSaving} onClick={handleValidateDeployment}>校验配置</Button>
-          <Button danger disabled={!deploymentConfig} onClick={handleRollbackDeployment}>恢复上次配置</Button>
+          <Button icon={<ReloadOutlined />} loading={deploymentLoading} onClick={loadDeployment}>
+            重新加载
+          </Button>
+          <Button disabled={!deploymentConfig} loading={deploymentSaving} onClick={handleValidateDeployment}>
+            校验配置
+          </Button>
+          <Button danger disabled={!deploymentConfig} onClick={handleRollbackDeployment}>
+            恢复上次配置
+          </Button>
           <Button
             type="primary"
             icon={<SaveOutlined />}
@@ -959,9 +1060,21 @@ export default function UpgradeConfigPage() {
           </Form.Item>
 
           <Row gutter={20}>
-            <Col xs={24} md={8}><Form.Item name="httpPort" label="用户端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="adminPort" label="后台管理端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="backendPort" label="后端端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="httpPort" label="用户端口" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="adminPort" label="后台管理端口" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="backendPort" label="后端端口" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+            </Col>
           </Row>
 
           <Form.Item
@@ -978,9 +1091,11 @@ export default function UpgradeConfigPage() {
               <Form.Item
                 name="dependencyInstallMode"
                 label="依赖处理方式"
-                extra={deploymentConfig?.mode === 'docker'
-                  ? '自动模式会拉取缺失镜像，已有且摘要匹配的镜像直接跳过；Docker Engine 必须预先安装。'
-                  : '自动模式下载固定版本工具链；系统服务仍由发行版包管理器安装。'}
+                extra={
+                  deploymentConfig?.mode === 'docker'
+                    ? '自动模式会拉取缺失镜像，已有且摘要匹配的镜像直接跳过；Docker Engine 必须预先安装。'
+                    : '自动模式下载固定版本工具链；系统服务仍由发行版包管理器安装。'
+                }
               >
                 <Select
                   options={[
@@ -1030,22 +1145,49 @@ export default function UpgradeConfigPage() {
             type="info"
             showIcon
             message={deploymentConfig?.mode === 'docker' ? 'Docker 内置 HTTPS' : 'Nginx HTTPS'}
-            description={deploymentConfig?.mode === 'docker'
-              ? '在 Compose Profiles 中加入 https 后生效。'
-              : '选择启用后，重启服务会重新生成并校验 Nginx 站点配置。'}
+            description={
+              deploymentConfig?.mode === 'docker'
+                ? '在 Compose Profiles 中加入 https 后生效。'
+                : '选择启用后，重启服务会重新生成并校验 Nginx 站点配置。'
+            }
             className="upgrade-page__modal-alert"
           />
           {deploymentConfig?.mode === 'systemd' && (
             <Form.Item name="httpsEnabled" label="启用 HTTPS">
-              <Radio.Group options={[{ label: '关闭', value: 'false' }, { label: '启用', value: 'true' }]} />
+              <Radio.Group
+                options={[
+                  { label: '关闭', value: 'false' },
+                  { label: '启用', value: 'true' }
+                ]}
+              />
             </Form.Item>
           )}
           <Row gutter={20}>
-            <Col xs={24} md={8}><Form.Item name="httpsPort" label="HTTPS端口"><Input placeholder="443" /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="httpsPublicDomain" label="用户端HTTPS域名"><Input placeholder="www.example.com" /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="httpsAdminDomain" label="管理端HTTPS域名"><Input placeholder="admin.example.com" /></Form.Item></Col>
-            <Col xs={24} md={12}><Form.Item name="httpsCertPath" label="完整证书路径" extra="必须位于 DATA_ROOT/config/ssl，禁止软链接。"><Input /></Form.Item></Col>
-            <Col xs={24} md={12}><Form.Item name="httpsKeyPath" label="证书私钥路径" extra="必须位于 DATA_ROOT/config/ssl，禁止软链接。"><Input /></Form.Item></Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="httpsPort" label="HTTPS端口">
+                <Input placeholder="443" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="httpsPublicDomain" label="用户端HTTPS域名">
+                <Input placeholder="www.example.com" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="httpsAdminDomain" label="管理端HTTPS域名">
+                <Input placeholder="admin.example.com" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item name="httpsCertPath" label="完整证书路径" extra="必须位于 DATA_ROOT/config/ssl，禁止软链接。">
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item name="httpsKeyPath" label="证书私钥路径" extra="必须位于 DATA_ROOT/config/ssl，禁止软链接。">
+                <Input />
+              </Form.Item>
+            </Col>
           </Row>
 
           {deploymentConfig?.mode === 'docker' && (
@@ -1053,9 +1195,11 @@ export default function UpgradeConfigPage() {
               type={usesInternalMysql ? 'warning' : 'info'}
               showIcon
               message={usesInternalMysql ? '当前使用内置 MySQL 5.7' : '当前使用外部 MySQL 5.7'}
-              description={usesInternalMysql
-                ? '数据库地址固定为 mysql:3306；已有容器的库名和账号密码不能通过修改配置直接轮换。'
-                : '保存前会校验外部数据库连接与版本；验证成功后不会启动 aid-mysql，旧容器会被移除但数据目录保留。Docker 宿主机数据库可填写 host.docker.internal。'}
+              description={
+                usesInternalMysql
+                  ? '数据库地址固定为 mysql:3306；已有容器的库名和账号密码不能通过修改配置直接轮换。'
+                  : '保存前会校验外部数据库连接与版本；验证成功后不会启动 aid-mysql，旧容器会被移除但数据目录保留。Docker 宿主机数据库可填写 host.docker.internal。'
+              }
               className="upgrade-page__modal-alert"
             />
           )}
@@ -1070,12 +1214,27 @@ export default function UpgradeConfigPage() {
                 <Input disabled={Boolean(usesInternalMysql)} />
               </Form.Item>
             </Col>
-            <Col xs={24} md={8}><Form.Item name="dbName" label="数据库名称" rules={[{ required: true }]}><Input disabled={Boolean(usesInternalMysql)} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="dbUsername" label="数据库账号" rules={[{ required: true }]}><Input disabled={Boolean(usesInternalMysql)} /></Form.Item></Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="dbName" label="数据库名称" rules={[{ required: true }]}>
+                <Input disabled={Boolean(usesInternalMysql)} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="dbUsername" label="数据库账号" rules={[{ required: true }]}>
+                <Input disabled={Boolean(usesInternalMysql)} />
+              </Form.Item>
+            </Col>
             {!usesInternalMysql && (
               <Col xs={24} md={8}>
                 <Form.Item name="dbPassword" label="数据库密码">
-                  <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('DB_PASSWORD') ? '已配置，留空保持不变' : '请输入数据库密码'} />
+                  <Input.Password
+                    autoComplete="new-password"
+                    placeholder={
+                      deploymentConfig?.configuredSecrets.includes('DB_PASSWORD')
+                        ? '已配置，留空保持不变'
+                        : '请输入数据库密码'
+                    }
+                  />
                 </Form.Item>
               </Col>
             )}
@@ -1084,24 +1243,60 @@ export default function UpgradeConfigPage() {
           {usesInternalMysql && (
             <Row gutter={20}>
               <Col xs={24} md={12}>
-                <Form.Item name="mysqlPort" label="内置 MySQL 宿主机端口"><Input /></Form.Item>
+                <Form.Item name="mysqlPort" label="内置 MySQL 宿主机端口">
+                  <Input />
+                </Form.Item>
               </Col>
               <Col xs={24} md={12}>
-                <Form.Item name="mysqlRootPassword" label="内置 MySQL root 密码" extra="留空保持当前密钥；仅用于升级器备份、恢复与增量 SQL。">
-                  <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('MYSQL_ROOT_PASSWORD') ? '已配置，留空保持不变' : '首次启用内置 MySQL 时必须填写'} />
+                <Form.Item
+                  name="mysqlRootPassword"
+                  label="内置 MySQL root 密码"
+                  extra="留空保持当前密钥；仅用于升级器备份、恢复与增量 SQL。"
+                >
+                  <Input.Password
+                    autoComplete="new-password"
+                    placeholder={
+                      deploymentConfig?.configuredSecrets.includes('MYSQL_ROOT_PASSWORD')
+                        ? '已配置，留空保持不变'
+                        : '首次启用内置 MySQL 时必须填写'
+                    }
+                  />
                 </Form.Item>
               </Col>
             </Row>
           )}
 
           <Row gutter={20}>
-            <Col xs={24} md={6}><Form.Item name="redisHost" label="Redis地址" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={24} md={4}><Form.Item name="redisPort" label="Redis端口" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={24} md={5}><Form.Item name="redisUsername" label="Redis ACL用户名"><Input placeholder="传统模式留空" /></Form.Item></Col>
-            <Col xs={24} md={4}><Form.Item name="redisDatabase" label="Redis库"><Input placeholder="0" /></Form.Item></Col>
+            <Col xs={24} md={6}>
+              <Form.Item name="redisHost" label="Redis地址" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={4}>
+              <Form.Item name="redisPort" label="Redis端口" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={5}>
+              <Form.Item name="redisUsername" label="Redis ACL用户名">
+                <Input placeholder="传统模式留空" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={4}>
+              <Form.Item name="redisDatabase" label="Redis库">
+                <Input placeholder="0" />
+              </Form.Item>
+            </Col>
             <Col xs={24} md={5}>
               <Form.Item name="redisPassword" label="Redis密码">
-                <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('REDIS_PASSWORD') ? '已配置，留空保持不变' : '无密码可留空'} />
+                <Input.Password
+                  autoComplete="new-password"
+                  placeholder={
+                    deploymentConfig?.configuredSecrets.includes('REDIS_PASSWORD')
+                      ? '已配置，留空保持不变'
+                      : '无密码可留空'
+                  }
+                />
               </Form.Item>
             </Col>
           </Row>
@@ -1112,19 +1307,39 @@ export default function UpgradeConfigPage() {
           <Row gutter={20}>
             <Col xs={24} md={12}>
               <Form.Item name="tokenSecret" label="JWT密钥" extra="留空保持当前密钥；更换后已有登录状态会失效。">
-                <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('TOKEN_SECRET') ? '已配置，留空保持不变' : '请输入强随机密钥'} />
+                <Input.Password
+                  autoComplete="new-password"
+                  placeholder={
+                    deploymentConfig?.configuredSecrets.includes('TOKEN_SECRET')
+                      ? '已配置，留空保持不变'
+                      : '请输入强随机密钥'
+                  }
+                />
               </Form.Item>
             </Col>
-            <Col xs={24} md={12}><Form.Item name="javaOpts" label="JVM参数"><Input placeholder="-Xms1g -Xmx2g" /></Form.Item></Col>
+            <Col xs={24} md={12}>
+              <Form.Item name="javaOpts" label="JVM参数">
+                <Input placeholder="-Xms1g -Xmx2g" />
+              </Form.Item>
+            </Col>
           </Row>
 
           <Row gutter={20}>
             <Col xs={24} md={8}>
               <Form.Item name="rocketmqEnabled" label="启用RocketMQ">
-                <Radio.Group options={[{ label: '关闭', value: 'false' }, { label: '启用', value: 'true' }]} />
+                <Radio.Group
+                  options={[
+                    { label: '关闭', value: 'false' },
+                    { label: '启用', value: 'true' }
+                  ]}
+                />
               </Form.Item>
             </Col>
-            <Col xs={24} md={16}><Form.Item name="rocketmqNameserver" label="RocketMQ NameServer"><Input /></Form.Item></Col>
+            <Col xs={24} md={16}>
+              <Form.Item name="rocketmqNameserver" label="RocketMQ NameServer">
+                <Input />
+              </Form.Item>
+            </Col>
             {usesInternalRocketmq && (
               <Col xs={24} md={12}>
                 <Form.Item
@@ -1132,21 +1347,37 @@ export default function UpgradeConfigPage() {
                   label="RocketMQ Broker刷盘"
                   extra="异步刷盘性能优先，同步刷盘持久性优先。业务投递始终等待Broker确认。"
                 >
-                  <Select options={[
-                    { label: '异步刷盘（推荐）', value: 'ASYNC_FLUSH' },
-                    { label: '同步刷盘', value: 'SYNC_FLUSH' }
-                  ]} />
+                  <Select
+                    options={[
+                      { label: '异步刷盘（推荐）', value: 'ASYNC_FLUSH' },
+                      { label: '同步刷盘', value: 'SYNC_FLUSH' }
+                    ]}
+                  />
                 </Form.Item>
               </Col>
             )}
             <Col xs={24} md={12}>
               <Form.Item name="rocketmqAccessKey" label="RocketMQ AccessKey">
-                <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('ROCKETMQ_ACCESS_KEY') ? '已配置，留空保持不变' : '未启用ACL可留空'} />
+                <Input.Password
+                  autoComplete="new-password"
+                  placeholder={
+                    deploymentConfig?.configuredSecrets.includes('ROCKETMQ_ACCESS_KEY')
+                      ? '已配置，留空保持不变'
+                      : '未启用ACL可留空'
+                  }
+                />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
               <Form.Item name="rocketmqSecretKey" label="RocketMQ SecretKey">
-                <Input.Password autoComplete="new-password" placeholder={deploymentConfig?.configuredSecrets.includes('ROCKETMQ_SECRET_KEY') ? '已配置，留空保持不变' : '未启用ACL可留空'} />
+                <Input.Password
+                  autoComplete="new-password"
+                  placeholder={
+                    deploymentConfig?.configuredSecrets.includes('ROCKETMQ_SECRET_KEY')
+                      ? '已配置，留空保持不变'
+                      : '未启用ACL可留空'
+                  }
+                />
               </Form.Item>
             </Col>
           </Row>
@@ -1157,26 +1388,182 @@ export default function UpgradeConfigPage() {
           {deploymentConfig?.mode === 'docker' && (
             <Collapse
               ghost
-              items={[{
-                key: 'docker-tuning',
-                label: 'Docker组件与资源调优',
-                children: (
-                  <>
-                    <Row gutter={20}>
-                      <Col xs={24} md={12}><Form.Item name="mysqlBufferPool" label="MySQL缓冲池"><Input placeholder="2G" /></Form.Item></Col>
-                      <Col xs={24} md={12}><Form.Item name="mysqlMaxConnections" label="MySQL最大连接数"><Input placeholder="500" /></Form.Item></Col>
-                      <Col xs={24} md={12}><Form.Item name="redisMaxmemory" label="Redis内存上限"><Input placeholder="1gb" /></Form.Item></Col>
-                      <Col xs={24} md={12}><Form.Item name="redisMaxmemoryPolicy" label="Redis淘汰策略"><Input placeholder="noeviction" /></Form.Item></Col>
-                      <Col xs={24} md={12}><Form.Item name="webNodeOptions" label="Web Node参数"><Input /></Form.Item></Col>
-                      <Col xs={24} md={12}><Form.Item name="mqNamesrvJavaOpts" label="MQ NameServer JVM"><Input /></Form.Item></Col>
-                      <Col xs={24} md={12}><Form.Item name="mqBrokerJavaOpts" label="MQ Broker JVM"><Input /></Form.Item></Col>
-                    </Row>
-                  </>
-                )
-              }]}
+              items={[
+                {
+                  key: 'docker-tuning',
+                  label: 'Docker组件与资源调优',
+                  children: (
+                    <>
+                      <Row gutter={20}>
+                        <Col xs={24} md={12}>
+                          <Form.Item name="mysqlBufferPool" label="MySQL缓冲池">
+                            <Input placeholder="2G" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <Form.Item name="mysqlMaxConnections" label="MySQL最大连接数">
+                            <Input placeholder="500" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <Form.Item name="redisMaxmemory" label="Redis内存上限">
+                            <Input placeholder="1gb" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <Form.Item name="redisMaxmemoryPolicy" label="Redis淘汰策略">
+                            <Input placeholder="noeviction" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <Form.Item name="webNodeOptions" label="Web Node参数">
+                            <Input />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <Form.Item name="mqNamesrvJavaOpts" label="MQ NameServer JVM">
+                            <Input />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <Form.Item name="mqBrokerJavaOpts" label="MQ Broker JVM">
+                            <Input />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    </>
+                  )
+                }
+              ]}
             />
           )}
         </Form>
+      </Spin>
+    </div>
+  );
+
+  const assetsPanel = (
+    <div className="upgrade-page__tab-panel">
+      <div className="upgrade-page__section-toolbar">
+        <Space>
+          <Text strong>官方资源初始化</Text>
+          <Tag color={assetsStatus?.initialized ? 'green' : 'orange'}>
+            {assetsStatus?.initialized ? '已初始化' : '未初始化'}
+          </Tag>
+        </Space>
+        <Button icon={<ReloadOutlined />} loading={assetsLoading} onClick={loadAssetsStatus}>
+          刷新状态
+        </Button>
+      </div>
+
+      <Spin spinning={assetsLoading}>
+        <Alert
+          type={assetsStatus?.initialized ? 'success' : 'warning'}
+          showIcon
+          message={assetsStatus?.initialized ? '官方资源已就绪' : '请初始化官方资源包'}
+          description={assetsStatus?.message || '上传官方资源包后，系统会校验文件并自动解压到本地存储目录。'}
+          className="upgrade-page__modal-alert"
+        />
+
+        <Descriptions bordered size="small" column={{ xs: 1, md: 2 }}>
+          <Descriptions.Item label="目标目录">{assetsStatus?.targetDirectory || '-'}</Descriptions.Item>
+          <Descriptions.Item label="资源文件数">{assetsStatus?.fileCount || 0}</Descriptions.Item>
+          <Descriptions.Item label="资源总大小">{formatBytes(assetsStatus?.totalBytes)}</Descriptions.Item>
+          <Descriptions.Item label="推荐文件名">
+            {assetsStatus?.recommendedArchiveName || 'aid-official-assets_1.0.0-beta.2.tar.gz'}
+          </Descriptions.Item>
+        </Descriptions>
+
+        <Alert
+          type="info"
+          showIcon
+          message="资源包结构说明"
+          description="支持 .tar 和 .tar.gz。压缩包内必须包含 files/aid 目录；系统只会安装该目录，并校验资源清单、防止路径越界。再次初始化会完整替换旧的 aid 资源目录。"
+          className="upgrade-page__modal-alert"
+        />
+
+        <Upload.Dragger
+          accept=".tar,.gz,application/x-tar,application/gzip"
+          maxCount={1}
+          disabled={assetsInstalling}
+          beforeUpload={(file) => {
+            setAssetsFile(file);
+            setAssetsUploadProgress(0);
+            return false;
+          }}
+          fileList={
+            assetsFile
+              ? [
+                  {
+                    uid: assetsFile.name,
+                    name: assetsFile.name,
+                    size: assetsFile.size,
+                    status: 'done'
+                  }
+                ]
+              : []
+          }
+          onRemove={() => {
+            setAssetsFile(null);
+            setAssetsUploadProgress(0);
+          }}
+        >
+          <p className="ant-upload-drag-icon">
+            <InboxOutlined />
+          </p>
+          <p className="ant-upload-text">点击或拖拽官方资源包到这里</p>
+          <p className="ant-upload-hint">
+            单文件最大 {formatBytes(assetsStatus?.maxUploadBytes || 1024 * 1024 * 1024)}，上传完成后自动校验并安装
+          </p>
+        </Upload.Dragger>
+
+        <div className="upgrade-page__assets-actions">
+          <Button
+            type="primary"
+            icon={<DownloadOutlined />}
+            disabled={!assetsFile}
+            loading={assetsInstalling}
+            onClick={handleInstallAssets}
+          >
+            上传并初始化
+          </Button>
+          {assetsFile && (
+            <Text type="secondary">
+              {assetsFile.name}（{formatBytes(assetsFile.size)}）
+            </Text>
+          )}
+        </div>
+        {(assetsInstalling || assetsUploadProgress > 0) && (
+          <Progress
+            percent={assetsUploadProgress}
+            status={assetsInstalling ? 'active' : assetsUploadProgress === 100 ? 'success' : 'normal'}
+          />
+        )}
+
+        <Alert
+          type="warning"
+          showIcon
+          message="浏览器无法上传时的完整安装方式"
+          description={
+            <div>
+              <Paragraph>
+                先从当前版本的发布页下载官方资源包并上传到服务器 <Text code>/data/aid/</Text>
+                ，然后运行下面的命令。命令会把包内的 <Text code>files/aid</Text> 解压为{' '}
+                <Text code>/data/aid/uploadPath/aid</Text>。
+              </Paragraph>
+              {hasReleaseLinks && <div className="upgrade-page__assets-release-links">{releaseLinks}</div>}
+              <Paragraph copyable code className="upgrade-page__assets-command">
+                {assetsStatus?.manualCommand ||
+                  "sudo mkdir -p /data/aid/uploadPath && sudo tar -xf /data/aid/aid-official-assets_1.0.0-beta.2.tar.gz -C /data/aid/uploadPath --strip-components=2 --wildcards '*/files/aid/*'"}
+              </Paragraph>
+              <Text type="secondary">
+                如果下载文件名以 .tar 结尾，把命令中的 .tar.gz 改为
+                .tar。执行完成后回到本页点击“刷新状态”确认文件数量和总大小。
+              </Text>
+            </div>
+          }
+          className="upgrade-page__modal-alert"
+        />
       </Spin>
     </div>
   );
@@ -1207,14 +1594,18 @@ export default function UpgradeConfigPage() {
       <Spin spinning={loading && !status}>
         <section className="upgrade-page__status-strip">
           <div className="upgrade-page__status-item">
-            <span className="upgrade-page__status-icon"><CheckCircleOutlined /></span>
+            <span className="upgrade-page__status-icon">
+              <CheckCircleOutlined />
+            </span>
             <div className="upgrade-page__status-content">
               <span>当前版本</span>
               <strong>{status?.currentVersion ? `v${status.currentVersion}` : '-'}</strong>
             </div>
           </div>
           <div className="upgrade-page__status-item">
-            <span className="upgrade-page__status-icon"><CloudDownloadOutlined /></span>
+            <span className="upgrade-page__status-icon">
+              <CloudDownloadOutlined />
+            </span>
             <div className="upgrade-page__status-content">
               <span>线上版本</span>
               <div>
@@ -1228,7 +1619,9 @@ export default function UpgradeConfigPage() {
             </div>
           </div>
           <div className="upgrade-page__status-item">
-            <span className="upgrade-page__status-icon"><ControlOutlined /></span>
+            <span className="upgrade-page__status-icon">
+              <ControlOutlined />
+            </span>
             <div className="upgrade-page__status-content">
               <span>升级器</span>
               <div>
@@ -1238,7 +1631,9 @@ export default function UpgradeConfigPage() {
             </div>
           </div>
           <div className="upgrade-page__status-item">
-            <span className="upgrade-page__status-icon"><HistoryOutlined /></span>
+            <span className="upgrade-page__status-icon">
+              <HistoryOutlined />
+            </span>
             <div className="upgrade-page__status-content">
               <span>可回退版本</span>
               <strong>{rollbackCount}</strong>
@@ -1251,14 +1646,21 @@ export default function UpgradeConfigPage() {
             <Card
               className="upgrade-page__status-card"
               bordered={false}
-              title={<Space size={8}><SyncOutlined /><span>更新状态</span></Space>}
+              title={
+                <Space size={8}>
+                  <SyncOutlined />
+                  <span>更新状态</span>
+                </Space>
+              }
             >
               <div className="upgrade-page__notice">
                 {statusNotice || <Text type="secondary">正在获取最新状态…</Text>}
               </div>
             </Card>
           </Col>
-          <Col xs={24} lg={16}>{releaseNotesCard}</Col>
+          <Col xs={24} lg={16}>
+            {releaseNotesCard}
+          </Col>
         </Row>
 
         <Card className="upgrade-page__workspace" bordered={false}>
@@ -1267,23 +1669,53 @@ export default function UpgradeConfigPage() {
             items={[
               {
                 key: 'updater',
-                label: <Space><ControlOutlined />升级器</Space>,
+                label: (
+                  <Space>
+                    <ControlOutlined />
+                    升级器
+                  </Space>
+                ),
                 children: updaterPanel
               },
               {
                 key: 'rollback',
-                label: <Space><DatabaseOutlined />版本回退{rollbackCount > 0 && <Tag>{rollbackCount}</Tag>}</Space>,
+                label: (
+                  <Space>
+                    <DatabaseOutlined />
+                    版本回退{rollbackCount > 0 && <Tag>{rollbackCount}</Tag>}
+                  </Space>
+                ),
                 children: rollbackPanel
               },
               {
                 key: 'settings',
-                label: <Space><SettingOutlined />升级配置{sourceDirty && <span className="upgrade-page__dirty-dot" />}</Space>,
+                label: (
+                  <Space>
+                    <SettingOutlined />
+                    升级配置{sourceDirty && <span className="upgrade-page__dirty-dot" />}
+                  </Space>
+                ),
                 children: settingsPanel
               },
               {
                 key: 'deployment',
-                label: <Space><SettingOutlined />运行配置{deploymentDirty && <span className="upgrade-page__dirty-dot" />}</Space>,
+                label: (
+                  <Space>
+                    <SettingOutlined />
+                    运行配置{deploymentDirty && <span className="upgrade-page__dirty-dot" />}
+                  </Space>
+                ),
                 children: deploymentPanel
+              },
+              {
+                key: 'assets',
+                label: (
+                  <Space>
+                    <InboxOutlined />
+                    官方资源
+                  </Space>
+                ),
+                children: assetsPanel
               }
             ]}
           />
@@ -1331,13 +1763,20 @@ export default function UpgradeConfigPage() {
       </Modal>
 
       <Modal
-        title={<Space><DownloadOutlined />安装 / 修复升级器</Space>}
+        title={
+          <Space>
+            <DownloadOutlined />
+            安装 / 修复升级器
+          </Space>
+        }
         open={installOpen}
         width={680}
         footer={
           <Space>
             <Button onClick={() => setInstallOpen(false)}>关闭</Button>
-            <Button icon={<ReloadOutlined />} loading={logsLoading} onClick={loadUpdaterLogs}>刷新日志</Button>
+            <Button icon={<ReloadOutlined />} loading={logsLoading} onClick={loadUpdaterLogs}>
+              刷新日志
+            </Button>
             <Button
               type="primary"
               icon={<SyncOutlined />}
@@ -1373,7 +1812,7 @@ export default function UpgradeConfigPage() {
             ? '日志加载中...'
             : updaterLogs?.lines?.length
               ? updaterLogs.lines.join('\n')
-              : (updaterLogs?.message || '暂无升级器日志')}
+              : updaterLogs?.message || '暂无升级器日志'}
         </pre>
       </Modal>
     </div>
