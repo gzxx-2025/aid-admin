@@ -1,5 +1,11 @@
 import { request } from '@/utils/request'
 
+export interface AssetUserDetail {
+  id: number
+  hiddenStylePromptJson?: string | null
+  [key: string]: unknown
+}
+
 // 查询用户自定义漫画参考资产列表
 export function listAssetuser(query) {
   return request({
@@ -10,8 +16,8 @@ export function listAssetuser(query) {
 }
 
 // 查询用户自定义漫画参考资产详细
-export function getAssetuser(id) {
-  return request({
+export function getAssetuser(id: number | string) {
+  return request<AssetUserDetail>({
     url: '/aid/assetuser/' + id,
     method: 'get'
   })

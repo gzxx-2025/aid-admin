@@ -1,6 +1,7 @@
 import React from 'react';
 import { Tag } from 'antd';
 import CrudPage, { type CrudConfig, type EmbeddedScope, scopedConfig } from '@/components/CrudPage';
+import HiddenStylePromptJsonField from '@/components/HiddenStylePromptJsonField';
 import {
   listAidcomicasset, getAidcomicasset, addAidcomicasset, updateAidcomicasset, delAidcomicasset
 } from '@/api/aid/aidcomicasset';
@@ -36,6 +37,14 @@ const config: CrudConfig = {
     { name: 'assetName', label: '资产名称', required: true, maxLength: 100 },
     { name: 'personalityDesc', label: '性格/特征描述', type: 'textarea', span: 24 },
     { name: 'promptText', label: '提示词', type: 'textarea', span: 24 },
+    {
+      name: 'hiddenStylePromptJson',
+      label: '隐藏风格提示词',
+      type: 'custom',
+      span: 24,
+      render: () => <HiddenStylePromptJsonField />,
+      viewRender: (value: string | null) => <HiddenStylePromptJsonField value={value} readOnly />
+    },
     { name: 'imageUrl', label: '主图', type: 'image', span: 24 },
     { name: 'remark', label: '备注', type: 'textarea', span: 24 }
   ]

@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import {
   createBrowserRouter,
   Navigate,
@@ -36,9 +36,49 @@ NProgress.configure({ showSpinner: false });
 const JobLogPage = lazy(() => import('@/views/monitor/job/log'));
 
 const WHITE_LIST = ['/login', '/register', '/404', '/401'];
+const ADMIN_ENTRY_CODE_PATTERN = /^[A-Za-z0-9]{8,32}$/;
 
 function isWhite(path: string) {
   return WHITE_LIST.some((p) => isPathMatch(p, path));
+}
+
+/**
+ * 随机后台入口只允许单段字母数字路径，长度口径与配置页保持一致。
+ * 先做本地形态过滤，避免普通动态路由触发访问码校验和限流。
+ */
+function getAdminEntryCandidate(path: string): string | null {
+  const normalized = path.replace(/^\/+|\/+$/g, '');
+  if (!normalized || normalized.includes('/') || !ADMIN_ENTRY_CODE_PATTERN.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+/** 已登录状态下确认当前单段路径是否为正在生效的后台访问码。 */
+async function isActiveAdminEntryPath(path: string): Promise<boolean> {
+  const candidate = getAdminEntryCandidate(path);
+  if (!candidate || !(await ensureEntryEnabled())) return false;
+
+  // 同一标签页登录成功后优先使用已校验缓存，避免重复占用访问码校验限额。
+  try {
+    const storedCode = sessionStorage.getItem('adminEntryCode');
+    // 已有可信缓存时可以直接判定：匹配则跳首页，不匹配则按普通业务路径处理。
+    if (storedCode) return storedCode === candidate;
+  } catch {
+    /* ignore storage error */
+  }
+
+  // 新标签页可能只有登录 Token、没有 sessionStorage，仍需由后端确认当前访问码。
+  const res: any = await verifyAdminEntry(candidate);
+  const valid = !!(res?.valid ?? res?.data?.valid);
+  if (valid) {
+    try {
+      sessionStorage.setItem('adminEntryCode', candidate);
+    } catch {
+      /* ignore storage error */
+    }
+  }
+  return valid;
 }
 
 /** 缓存入口启用状态（一次性拉取；失败按未启用，避免误锁死登录入口） */
@@ -74,7 +114,6 @@ function RootGuard() {
   const brandLoaded = useAdminBrandStore((s) => s.loaded);
   const loadBrand = useAdminBrandStore((s) => s.load);
 
-  const token = useUserStore((s) => s.token);
   const roles = useUserStore((s) => s.roles);
   const fetchInfo = useUserStore((s) => s.fetchInfo);
   const logoutUser = useUserStore((s) => s.logout);
@@ -85,6 +124,8 @@ function RootGuard() {
   const [gateChecking, setGateChecking] = useState(!getToken());
   // 启用随机入口且访问码校验通过时，直接在 /<访问码> 地址渲染登录页（不跳转 /login）
   const [secretLogin, setSecretLogin] = useState(false);
+  // 已登录时的访问码路径也必须先完成确认，防止动态路由在重定向前闪出 404。
+  const [checkedEntryPath, setCheckedEntryPath] = useState<string | null>(null);
 
   useEffect(() => {
     if (!brandLoaded) loadBrand();
@@ -149,20 +190,29 @@ function RootGuard() {
 
     // 已登录
     setSecretLogin(false);
-    setGateChecking(false);
     if (path === '/login') {
+      setGateChecking(false);
       navigate('/', { replace: true });
       NProgress.done();
       return;
     }
 
     if (isWhite(path)) {
+      setGateChecking(false);
       NProgress.done();
       return;
     }
 
+    const entryCandidate = getAdminEntryCandidate(path);
+    // 访问码形态的路径必须等后端确认后再交给动态路由，避免先显示 404。
+    setGateChecking(!!entryCandidate);
+
     (async () => {
       try {
+        if (entryCandidate && await isActiveAdminEntryPath(path)) {
+          navigate('/index', { replace: true });
+          return;
+        }
         if (roles.length === 0) {
           await fetchInfo();
           await generateRoutes();
@@ -173,6 +223,8 @@ function RootGuard() {
         await logoutUser();
         navigate('/login', { replace: true });
       } finally {
+        setCheckedEntryPath(path);
+        setGateChecking(false);
         NProgress.done();
       }
     })();
@@ -190,7 +242,8 @@ function RootGuard() {
     setTitle(title);
   }, [setTitle, siteName]);
 
-  if (gateChecking) {
+  const loggedInEntryCandidate = !!getToken() && !!getAdminEntryCandidate(location.pathname);
+  if (gateChecking || (loggedInEntryCandidate && checkedEntryPath !== location.pathname)) {
     return <LoadingFallback />;
   }
 

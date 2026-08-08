@@ -1,5 +1,11 @@
 import { request } from '@/utils/request'
 
+export interface AidProjectDetail {
+  id: number
+  hiddenStylePromptJson?: string | null
+  [key: string]: unknown
+}
+
 // 查询漫剧项目主列表
 export function listAidproject(query) {
   return request({
@@ -10,8 +16,8 @@ export function listAidproject(query) {
 }
 
 // 查询漫剧项目主详细
-export function getAidproject(id) {
-  return request({
+export function getAidproject(id: number | string) {
+  return request<AidProjectDetail>({
     url: '/aid/aidproject/' + id,
     method: 'get'
   })

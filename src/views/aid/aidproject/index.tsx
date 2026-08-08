@@ -1,11 +1,12 @@
 import React from 'react';
 import { Tag } from 'antd';
 import CrudPage, { type CrudConfig, type EmbeddedScope, scopedConfig } from '@/components/CrudPage';
+import HiddenStylePromptJsonField from '@/components/HiddenStylePromptJsonField';
 import {
   listAidproject, getAidproject, addAidproject, updateAidproject, delAidproject
 } from '@/api/aid/aidproject';
 import {
-  PROJECT_TYPE_OPTIONS, SCRIPT_TYPE_OPTIONS, ASPECT_RATIO_OPTIONS, VIDEO_STYLE_TYPE_OPTIONS,
+  PROJECT_TYPE_OPTIONS, SCRIPT_TYPE_OPTIONS, ASPECT_RATIO_OPTIONS,
   GEN_MODE_OPTIONS, STORYBOARD_MODE_OPTIONS, CREATION_MODE_OPTIONS, PROJECT_STATUS_OPTIONS,
   YES_NO_OPTIONS, CURRENT_STEP_WITH_MOVIE_OPTIONS, getLabelByValue, getAntdTagColor
 } from '@/utils/enums';
@@ -16,6 +17,7 @@ const config: CrudConfig = {
   rowKey: 'id',
   modalWidth: 760,
   viewable: true,
+  hideAdd: true,
   api: {
     list: listAidproject,
     get: getAidproject,
@@ -39,7 +41,7 @@ const config: CrudConfig = {
     { title: '封面', dataIndex: 'coverUrl', width: 80, render: (v: string) => v ? <img src={v} alt="" style={{ width: 40, height: 56, objectFit: 'cover', borderRadius: 4 }} /> : '-' },
     { title: '画面比例', dataIndex: 'aspectRatio', width: 100 },
     { title: '剧本类型', dataIndex: 'scriptType', width: 110, render: (v: string) => getLabelByValue(SCRIPT_TYPE_OPTIONS, v) },
-    { title: '风格来源', dataIndex: 'videoStyleType', width: 110, render: (v: string) => getLabelByValue(VIDEO_STYLE_TYPE_OPTIONS, v) },
+    { title: '风格名称', dataIndex: 'videoStyleType', width: 140, ellipsis: true },
     { title: '生成模式', dataIndex: 'defaultGenMode', width: 100, render: (v: string) => getLabelByValue(GEN_MODE_OPTIONS, v) },
     { title: '分镜模式', dataIndex: 'defaultStoryboardMode', width: 100, render: (v: string) => getLabelByValue(STORYBOARD_MODE_OPTIONS, v) },
     { title: '创作模式', dataIndex: 'defaultCreationMode', width: 110, render: (v: string) => getLabelByValue(CREATION_MODE_OPTIONS, v) },
@@ -56,8 +58,16 @@ const config: CrudConfig = {
     { name: 'aspectRatio', label: '画面比例', type: 'select', options: ASPECT_RATIO_OPTIONS },
     { name: 'coverUrl', label: '封面图URL', span: 24 },
     { name: 'scriptType', label: '剧本类型', type: 'select', options: SCRIPT_TYPE_OPTIONS },
-    { name: 'videoStyleType', label: '风格来源', type: 'select', options: VIDEO_STYLE_TYPE_OPTIONS },
-    { name: 'videoStyleValue', label: '风格值', type: 'textarea', span: 24 },
+    { name: 'videoStyleType', label: '风格名称', disabled: true },
+    { name: 'videoStyleValue', label: '公开风格描述快照', type: 'textarea', span: 24, disabled: true },
+    {
+      name: 'hiddenStylePromptJson',
+      label: '隐藏风格提示词快照',
+      type: 'custom',
+      span: 24,
+      render: () => <HiddenStylePromptJsonField readOnly />,
+      viewRender: (value: string | null) => <HiddenStylePromptJsonField value={value} readOnly />
+    },
     { name: 'defaultGenMode', label: '默认生成模式', type: 'select', options: GEN_MODE_OPTIONS },
     { name: 'defaultStoryboardMode', label: '默认分镜模式', type: 'select', options: STORYBOARD_MODE_OPTIONS },
     { name: 'defaultCreationMode', label: '默认创作模式', type: 'select', options: CREATION_MODE_OPTIONS },
@@ -65,7 +75,15 @@ const config: CrudConfig = {
     { name: 'statusReason', label: '状态原因', type: 'textarea', span: 24 },
     { name: 'isPublic', label: '是否公开', type: 'select', options: YES_NO_OPTIONS },
     { name: 'remark', label: '备注', type: 'textarea', span: 24 }
-  ]
+  ],
+  beforeSubmit: (data: any) => {
+    const payload = { ...data };
+    // 项目公开风格与隐藏模板共同组成创建/切换时的快照，后台普通编辑不得覆盖。
+    delete payload.videoStyleType;
+    delete payload.videoStyleValue;
+    delete payload.hiddenStylePromptJson;
+    return payload;
+  }
 };
 
 export default function Page({ scope }: { scope?: EmbeddedScope } = {}) {
