@@ -7,7 +7,7 @@ export function getAgentMatrix(step?: string) {
   return request({ url: '/aid/genagentpool/matrix', method: 'get', params: { step } });
 }
 
-// 某业务场景下可选的智能体 + 模型（下拉数据）
+// 某业务场景下可选的智能体 + 带场景级清晰度/比例能力的模型（联动下拉数据）
 export function getPoolOptions(biz: string) {
   return request({ url: '/aid/genagentpool/options', method: 'get', params: { biz } });
 }

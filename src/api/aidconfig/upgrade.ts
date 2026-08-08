@@ -17,6 +17,14 @@ export interface UpdaterLastTask {
   /** 最近进度更新时间 */
   updatedAt?: string;
   finishedAt?: string;
+  /** 部署配置分项诊断结果 */
+  checks?: Record<string, DeploymentCheck>;
+}
+
+export interface DeploymentCheck {
+  status: 'PASS' | 'FAIL' | 'SKIPPED';
+  message: string;
+  suggestion?: string;
 }
 
 /** 升级器状态 */
@@ -113,6 +121,10 @@ export interface DeploymentConfigSaveParams {
   webNodeOptions?: string;
   mqNamesrvJavaOpts?: string;
   mqBrokerJavaOpts?: string;
+}
+
+export interface DeploymentConfigTestParams extends DeploymentConfigSaveParams {
+  targets: Array<'config' | 'dns' | 'certificate' | 'https' | 'mysql' | 'redis' | 'rocketmq'>;
 }
 
 /** 官方API地址同步状态 */
@@ -314,6 +326,40 @@ export function rollbackDeploymentConfig() {
   return request<void>({
     url: '/aidconfig/upgrade/deployment-config/rollback',
     method: 'post'
+  });
+}
+
+/** 由升级器在服务器侧执行部署配置分项诊断；不会写配置或重启。 */
+export function testDeploymentConfig(data: DeploymentConfigTestParams) {
+  return request<void>({
+    url: '/aidconfig/upgrade/deployment-config/test',
+    method: 'post',
+    data
+  });
+}
+
+/** 安全上传完整证书链与私钥；私钥仅进入升级器受控暂存目录。 */
+export function installHttpsCertificate(
+  certificate: File,
+  privateKey: File,
+  options: Pick<DeploymentConfigSaveParams, 'configPath' | 'httpsPublicDomain' | 'httpsAdminDomain'>,
+  onProgress?: (percent: number) => void
+) {
+  const formData = new FormData();
+  formData.append('certificate', certificate, certificate.name);
+  formData.append('privateKey', privateKey, privateKey.name);
+  if (options.configPath) formData.append('configPath', options.configPath);
+  if (options.httpsPublicDomain) formData.append('httpsPublicDomain', options.httpsPublicDomain);
+  if (options.httpsAdminDomain) formData.append('httpsAdminDomain', options.httpsAdminDomain);
+  return request<void>({
+    url: '/aidconfig/upgrade/deployment-config/certificate',
+    method: 'post',
+    data: formData,
+    headers: { 'Content-Type': 'multipart/form-data', repeatSubmit: false },
+    timeout: 2 * 60 * 1000,
+    onUploadProgress: (event) => {
+      if (event.total && onProgress) onProgress(Math.min(99, Math.round((event.loaded * 100) / event.total)));
+    }
   });
 }
 

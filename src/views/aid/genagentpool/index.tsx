@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Tabs, Table, Button, Space, Tag, Modal, Form, Select, Input, message, Popconfirm, Typography
+  Tabs, Table, Button, Space, Tag, Modal, Form, Select, message, Popconfirm, Typography
 } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { getAgentMatrix, getPoolOptions, saveMatrixCell, deleteMatrixCell } from '@/api/aid/genagentpool';
+import { listModelByFunc } from '@/api/aid/aimanage';
 import { useAuth } from '@/hooks/useAuth';
 
 const { Text } = Typography;
@@ -14,6 +15,16 @@ const WILDCARD = '*';
 
 /** 步骤元数据：storyboard=随创作模式×剧本类型变；fixed=固定业务场景、通配维度 */
 interface SceneOpt { value: string; label: string }
+interface ModelOption {
+  value: string;
+  label: string;
+  sizeOptions?: string[];
+  aspectRatioOptions?: string[];
+  defaultSize?: string;
+  defaultAspectRatio?: string;
+  supportsSizePreset?: boolean;
+  supportsAspectRatio?: boolean;
+}
 interface StepMeta {
   value: string;
   label: string;
@@ -69,6 +80,40 @@ const SCRIPT_TYPE_OPTIONS = [
 /** 仅剧情演绎支持的创作模式（专业/宫格不支持真人解说） */
 const PLOT_ONLY_MODES = ['pro', 'auto_grid'];
 
+/** 项目生成场景对应 capability.sceneRules 键；这里只映射场景，不维护任何规格枚举。 */
+function capabilitySceneOf(biz: string): 'textToImage' | 'imageToImage' {
+  return biz === 'main_character_card_image' || biz === 'main_storyboard_image'
+    ? 'imageToImage'
+    : 'textToImage';
+}
+
+/** 兼容生成池旧接口：缺少能力字段时，从现有模型池接口的 capability 动态补齐。 */
+function mergeModelCapability(option: any, detail: any, biz: string): ModelOption {
+  if (Object.prototype.hasOwnProperty.call(option, 'sizeOptions')
+    || Object.prototype.hasOwnProperty.call(option, 'aspectRatioOptions')) {
+    return option as ModelOption;
+  }
+  const capability = detail?.capability || {};
+  const sceneRule = capability.sceneRules?.[capabilitySceneOf(biz)] || {};
+  const sceneSizes = Array.isArray(sceneRule.sizeOptions) ? sceneRule.sizeOptions : [];
+  const sceneAspects = Array.isArray(sceneRule.aspectRatioOptions) ? sceneRule.aspectRatioOptions : [];
+  const topSizes = Array.isArray(capability.sizeOptions) ? capability.sizeOptions : [];
+  const topAspects = Array.isArray(capability.aspectRatioOptions) ? capability.aspectRatioOptions : [];
+  return {
+    ...option,
+    sizeOptions: sceneSizes.length ? sceneSizes : topSizes,
+    aspectRatioOptions: sceneAspects.length ? sceneAspects : topAspects,
+    defaultSize: sceneRule.defaultSize || capability.defaultSize || detail?.defaultSizeCode,
+    defaultAspectRatio: sceneRule.defaultAspectRatio || capability.defaultAspectRatio || detail?.defaultAspectRatio,
+    supportsSizePreset: typeof sceneRule.supportsSizePreset === 'boolean'
+      ? sceneRule.supportsSizePreset
+      : detail?.supportsSizePreset,
+    supportsAspectRatio: typeof sceneRule.supportsAspectRatio === 'boolean'
+      ? sceneRule.supportsAspectRatio
+      : detail?.supportsAspectRatio
+  };
+}
+
 const labelOf = (opts: { label: string; value: string }[], v: string) =>
   opts.find((o) => o.value === v)?.label || v || '--';
 
@@ -95,10 +140,12 @@ export default function GenAgentMatrix() {
   const [saving, setSaving] = useState(false);
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [agentOpts, setAgentOpts] = useState<any[]>([]);
-  const [modelOpts, setModelOpts] = useState<any[]>([]);
+  const [modelOpts, setModelOpts] = useState<ModelOption[]>([]);
   const [form] = Form.useForm();
   const watchMode = Form.useWatch('creationMode', form);
   const watchBiz = Form.useWatch('bizCategoryCode', form);
+  const watchEconomyModel = Form.useWatch('economyModel', form);
+  const watchPerformanceModel = Form.useWatch('performanceModel', form);
 
   const stepMeta = useMemo(() => STEPS.find((s) => s.value === activeStep) as StepMeta, [activeStep]);
   const isFixed = stepMeta.kind === 'fixed';
@@ -129,16 +176,75 @@ export default function GenAgentMatrix() {
   useEffect(() => {
     if (!modalOpen || !currentBiz) return;
     let stale = false;
+    setAgentOpts([]);
+    setModelOpts([]);
     setOptionsLoading(true);
-    getPoolOptions(currentBiz)
-      .then((res: any) => {
+    Promise.all([
+      getPoolOptions(currentBiz),
+      listModelByFunc(currentBiz).catch(() => ({ data: [] }))
+    ])
+      .then(([res, modelRes]: any[]) => {
         if (stale) return;
         setAgentOpts((res.data?.agents || []).map((o: any) => ({ label: o.label, value: o.value })));
-        setModelOpts((res.data?.models || []).map((o: any) => ({ label: o.label, value: o.value })));
+        const details = Array.isArray(modelRes?.data) ? modelRes.data : [];
+        const detailByCode = new Map(details.map((model: any) => [model.modelCode, model]));
+        setModelOpts((res.data?.models || []).map((o: any) =>
+          mergeModelCapability({ ...o, label: o.label, value: o.value }, detailByCode.get(o.value), currentBiz)
+        ));
       })
       .finally(() => { if (!stale) setOptionsLoading(false); });
     return () => { stale = true; };
   }, [modalOpen, currentBiz]);
+
+  const economyModelOption = useMemo(
+    () => modelOpts.find((model) => model.value === watchEconomyModel),
+    [modelOpts, watchEconomyModel]
+  );
+  const performanceModelOption = useMemo(
+    () => modelOpts.find((model) => model.value === watchPerformanceModel),
+    [modelOpts, watchPerformanceModel]
+  );
+
+  const toSelectOptions = (values?: string[]) =>
+    (values || []).map((value) => ({ label: value, value }));
+
+  /** 模型切换后仅保留新模型支持的值，否则回退模型默认项或能力列表首项。 */
+  const applyModelCapabilities = useCallback((strategy: 'economy' | 'performance', modelCode?: string) => {
+    if (!modelCode) {
+      form.setFieldsValue({
+        [`${strategy}Resolution`]: undefined,
+        [`${strategy}AspectRatio`]: undefined
+      });
+      return;
+    }
+    const model = modelOpts.find((item) => item.value === modelCode);
+    if (!model) return;
+
+    const resolutionField = `${strategy}Resolution`;
+    const aspectRatioField = `${strategy}AspectRatio`;
+    const sizeOptions = model.supportsSizePreset === false ? [] : (model.sizeOptions || []);
+    const aspectOptions = model.supportsAspectRatio === false ? [] : (model.aspectRatioOptions || []);
+    const currentResolution = form.getFieldValue(resolutionField);
+    const currentAspectRatio = form.getFieldValue(aspectRatioField);
+    const nextResolution = sizeOptions.includes(currentResolution)
+      ? currentResolution
+      : (sizeOptions.includes(model.defaultSize || '') ? model.defaultSize : sizeOptions[0]);
+    const nextAspectRatio = aspectOptions.includes(currentAspectRatio)
+      ? currentAspectRatio
+      : (aspectOptions.includes(model.defaultAspectRatio || '') ? model.defaultAspectRatio : aspectOptions[0]);
+    form.setFieldsValue({
+      [resolutionField]: nextResolution,
+      [aspectRatioField]: nextAspectRatio
+    });
+  }, [form, modelOpts]);
+
+  // 编辑旧配置或切换业务场景后，按接口返回的模型能力自动修复已失效选项。
+  useEffect(() => {
+    if (!modalOpen || !isImage || optionsLoading || modelOpts.length === 0) return;
+    applyModelCapabilities('economy', watchEconomyModel);
+    applyModelCapabilities('performance', watchPerformanceModel);
+  }, [modalOpen, isImage, optionsLoading, modelOpts, watchEconomyModel,
+    watchPerformanceModel, applyModelCapabilities]);
 
   // 智能体下拉选项：在"该 biz 启用智能体"基础上，补上当前格子已保存的智能体，
   // 确保即使某智能体停用/biz 调整，编辑时仍能看到并重选自己原本配置的值（修复"选不到自己的"）。
@@ -394,13 +500,35 @@ export default function GenAgentMatrix() {
             <Select allowClear showSearch optionFilterProp="label" loading={optionsLoading} options={agentSelectOpts} placeholder="该场景下可选智能体" />
           </Form.Item>
           <Form.Item label="经济·模型" name="economyModel">
-            <Select allowClear showSearch optionFilterProp="label" loading={optionsLoading} options={modelOpts} placeholder="留空走智能体默认模型" />
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              loading={optionsLoading}
+              options={modelOpts}
+              placeholder="留空走智能体默认模型"
+              onChange={(value) => applyModelCapabilities('economy', value)}
+            />
           </Form.Item>
           {isImage && (
             <Form.Item label="经济·清晰度/比例">
               <Space>
-                <Form.Item name="economyResolution" noStyle><Input style={{ width: 140 }} placeholder="清晰度 如 1K" /></Form.Item>
-                <Form.Item name="economyAspectRatio" noStyle><Input style={{ width: 140 }} placeholder="比例 如 1:1" /></Form.Item>
+                <Form.Item name="economyResolution" noStyle>
+                  <Select
+                    style={{ width: 140 }}
+                    options={toSelectOptions(economyModelOption?.sizeOptions)}
+                    disabled={!economyModelOption || economyModelOption.supportsSizePreset === false}
+                    placeholder={economyModelOption ? '选择清晰度' : '请先选择模型'}
+                  />
+                </Form.Item>
+                <Form.Item name="economyAspectRatio" noStyle>
+                  <Select
+                    style={{ width: 140 }}
+                    options={toSelectOptions(economyModelOption?.aspectRatioOptions)}
+                    disabled={!economyModelOption || economyModelOption.supportsAspectRatio === false}
+                    placeholder={economyModelOption?.supportsAspectRatio === false ? '模型不支持比例' : '选择比例'}
+                  />
+                </Form.Item>
               </Space>
             </Form.Item>
           )}
@@ -408,13 +536,35 @@ export default function GenAgentMatrix() {
             <Select allowClear showSearch optionFilterProp="label" loading={optionsLoading} options={agentSelectOpts} placeholder="该场景下可选智能体" />
           </Form.Item>
           <Form.Item label="性能·模型" name="performanceModel">
-            <Select allowClear showSearch optionFilterProp="label" loading={optionsLoading} options={modelOpts} placeholder="留空走智能体默认模型" />
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              loading={optionsLoading}
+              options={modelOpts}
+              placeholder="留空走智能体默认模型"
+              onChange={(value) => applyModelCapabilities('performance', value)}
+            />
           </Form.Item>
           {isImage && (
             <Form.Item label="性能·清晰度/比例">
               <Space>
-                <Form.Item name="performanceResolution" noStyle><Input style={{ width: 140 }} placeholder="清晰度 如 2K" /></Form.Item>
-                <Form.Item name="performanceAspectRatio" noStyle><Input style={{ width: 140 }} placeholder="比例 如 1:1" /></Form.Item>
+                <Form.Item name="performanceResolution" noStyle>
+                  <Select
+                    style={{ width: 140 }}
+                    options={toSelectOptions(performanceModelOption?.sizeOptions)}
+                    disabled={!performanceModelOption || performanceModelOption.supportsSizePreset === false}
+                    placeholder={performanceModelOption ? '选择清晰度' : '请先选择模型'}
+                  />
+                </Form.Item>
+                <Form.Item name="performanceAspectRatio" noStyle>
+                  <Select
+                    style={{ width: 140 }}
+                    options={toSelectOptions(performanceModelOption?.aspectRatioOptions)}
+                    disabled={!performanceModelOption || performanceModelOption.supportsAspectRatio === false}
+                    placeholder={performanceModelOption?.supportsAspectRatio === false ? '模型不支持比例' : '选择比例'}
+                  />
+                </Form.Item>
               </Space>
             </Form.Item>
           )}

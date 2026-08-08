@@ -17,6 +17,7 @@ import {
   Select,
   Space,
   Spin,
+  Switch,
   Tabs,
   Tag,
   Typography,
@@ -27,6 +28,7 @@ import {
   CheckCircleOutlined,
   CloseOutlined,
   CloudDownloadOutlined,
+  CloudServerOutlined,
   CodeOutlined,
   ControlOutlined,
   DatabaseOutlined,
@@ -38,15 +40,18 @@ import {
   InboxOutlined,
   ReloadOutlined,
   RocketOutlined,
+  SafetyCertificateOutlined,
   SaveOutlined,
   SettingOutlined,
   SyncOutlined,
-  UpOutlined
+  UpOutlined,
+  UploadOutlined
 } from '@ant-design/icons';
 
 import {
   applyDeploymentConfig,
   DeploymentConfig,
+  DeploymentCheck,
   DeploymentConfigSaveParams,
   getDeploymentConfig,
   getOfficialAssetsStatus,
@@ -58,6 +63,8 @@ import {
   startUpdaterUpgrade,
   startUpgrade,
   installOfficialAssets,
+  installHttpsCertificate,
+  testDeploymentConfig,
   validateDeploymentConfig,
   UpdaterLog,
   OfficialAssetsStatus,
@@ -89,11 +96,27 @@ const TASK_ACTION_TEXT: Record<string, string> = {
   UPDATER_UPGRADE: '升级器升级',
   ROLLBACK: '版本回退',
   CONFIG_VALIDATE: '配置校验',
+  CONFIG_TEST: '配置诊断',
   CONFIG_APPLY: '配置应用',
-  CONFIG_ROLLBACK: '配置恢复'
+  CONFIG_ROLLBACK: '配置恢复',
+  CERT_INSTALL: '证书安装'
 };
 
 const VERSION_TASK_ACTIONS = new Set(['UPGRADE', 'UPDATER_UPGRADE', 'ROLLBACK']);
+const CONFIG_RELOAD_ACTIONS = new Set(['CERT_INSTALL', 'CONFIG_APPLY', 'CONFIG_ROLLBACK']);
+const HOSTNAME_PATTERN = /^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+const portRules = (required: boolean) => [
+  { required, message: '请输入端口' },
+  {
+    validator: (_: unknown, value?: string) => {
+      if (value === undefined || value === null || String(value).trim() === '') return Promise.resolve();
+      const port = Number(value);
+      return Number.isInteger(port) && port >= 1 && port <= 65535
+        ? Promise.resolve()
+        : Promise.reject(new Error('端口范围必须为 1-65535'));
+    }
+  }
+];
 
 const deploymentToForm = (config: DeploymentConfig): DeploymentConfigSaveParams => {
   const value = config.values || {};
@@ -117,7 +140,7 @@ const deploymentToForm = (config: DeploymentConfig): DeploymentConfigSaveParams 
     javaOpts: value.JAVA_OPTS,
     dependencyInstallMode: value.DEPENDENCY_INSTALL_MODE || 'auto',
     dependencyRegion: value.DEPENDENCY_REGION || 'auto',
-    dockerMirrors: value.DOCKER_MIRRORS || 'docker.m.daocloud.io,dockerproxy.net',
+    dockerMirrors: config.mode === 'docker' ? value.DOCKER_MIRRORS || 'docker.m.daocloud.io,dockerproxy.net' : undefined,
     composeProfiles: value.COMPOSE_PROFILES,
     rocketmqEnabled: value.ROCKETMQ_ENABLED,
     rocketmqNameserver: value.ROCKETMQ_NAMESERVER,
@@ -250,6 +273,12 @@ export default function UpgradeConfigPage() {
   const [deploymentLoading, setDeploymentLoading] = useState(true);
   const [deploymentSaving, setDeploymentSaving] = useState(false);
   const [deploymentDirty, setDeploymentDirty] = useState(false);
+  const [deploymentTestTarget, setDeploymentTestTarget] = useState<string>();
+  const [deploymentCheckResults, setDeploymentCheckResults] = useState<Record<string, DeploymentCheck>>({});
+  const [certificateFile, setCertificateFile] = useState<File | null>(null);
+  const [privateKeyFile, setPrivateKeyFile] = useState<File | null>(null);
+  const [certificateUploading, setCertificateUploading] = useState(false);
+  const [certificateUploadProgress, setCertificateUploadProgress] = useState(0);
   const [assetsStatus, setAssetsStatus] = useState<OfficialAssetsStatus | null>(null);
   const [assetsLoading, setAssetsLoading] = useState(true);
   const [assetsInstalling, setAssetsInstalling] = useState(false);
@@ -270,12 +299,26 @@ export default function UpgradeConfigPage() {
   const [sourceForm] = Form.useForm<UpgradeSourceSetting>();
   const [deploymentForm] = Form.useForm<DeploymentConfigSaveParams>();
   const composeProfiles = Form.useWatch('composeProfiles', deploymentForm) || '';
+  const manualHttpsEnabled = Form.useWatch('httpsEnabled', deploymentForm) === 'true';
+  const databaseHost = (Form.useWatch('dbHost', deploymentForm) || '').trim().toLowerCase();
+  const rocketmqEnabled = Form.useWatch('rocketmqEnabled', deploymentForm) === 'true';
+  const rocketmqNameserver = Form.useWatch('rocketmqNameserver', deploymentForm) || '';
   const usesInternalMysql =
     deploymentConfig?.mode === 'docker' && composeProfiles.split(',').some((item) => item.trim() === 'mysql');
   const usesInternalRocketmq =
     deploymentConfig?.mode === 'docker' && composeProfiles.split(',').some((item) => item.trim() === 'mq');
+  const usesInternalRedis =
+    deploymentConfig?.mode === 'docker' && composeProfiles.split(',').some((item) => item.trim() === 'redis');
+  const usesLocalManualMysql =
+    deploymentConfig?.mode === 'systemd' && ['127.0.0.1', 'localhost', '::1'].includes(databaseHost);
+  const httpsEnabled =
+    deploymentConfig?.mode === 'docker'
+      ? composeProfiles.split(',').some((item) => item.trim() === 'https')
+      : manualHttpsEnabled;
 
   const updater = status?.updater;
+  const configProtocolReady = updater?.ready === true && (updater.protocolVersion || 0) >= 3;
+  const configProtocolIncompatible = updater?.status === 'INCOMPATIBLE' || Boolean(updater && (updater.protocolVersion || 0) < 3);
   const updaterTag = UPDATER_TAG[updater?.status || 'UNKNOWN'] || UPDATER_TAG.UNKNOWN;
   const rollbackCount = status?.rollbackReleases?.length || 0;
   const lastTask = updater?.lastTask;
@@ -292,6 +335,12 @@ export default function UpgradeConfigPage() {
   const showProgressTerminal =
     isVersionTask && (taskRunning || Boolean(pendingTaskAction)) && dismissedTaskId !== progressTaskId;
   const selectedRollback = status?.rollbackReleases?.find((item) => item.version === rollbackVersion);
+  const mqActive = rocketmqEnabled && (
+    deploymentConfig?.mode === 'docker'
+      ? usesInternalRocketmq || Boolean(rocketmqNameserver.trim())
+      : Boolean(rocketmqNameserver.trim())
+  );
+  const deploymentChecks = deploymentCheckResults;
 
   const loadStatus = useCallback(
     async (force: boolean) => {
@@ -427,7 +476,10 @@ export default function UpgradeConfigPage() {
         if (pollingTaskSeen.current && nextTask?.state !== 'RUNNING') {
           setTaskPolling(false);
           loadUpdaterLogs(true).catch(() => undefined);
-          loadDeployment().catch(() => undefined);
+          const completedAction = nextTask?.action || pendingTaskAction;
+          if (completedAction && (CONFIG_RELOAD_ACTIONS.has(completedAction) || VERSION_TASK_ACTIONS.has(completedAction))) {
+            loadDeployment().catch(() => undefined);
+          }
         } else if (attempts >= 2880) {
           setTaskPolling(false);
         }
@@ -444,7 +496,24 @@ export default function UpgradeConfigPage() {
       window.clearTimeout(firstTimer);
       window.clearInterval(timer);
     };
-  }, [loadDeployment, loadStatusShared, loadUpdaterLogs, taskPolling]);
+  }, [loadDeployment, loadStatusShared, loadUpdaterLogs, pendingTaskAction, taskPolling]);
+
+  useEffect(() => {
+    if (!taskPolling && lastTask?.action === 'CONFIG_TEST' && lastTask.state !== 'RUNNING') {
+      if (lastTask.checks) {
+        setDeploymentCheckResults((current) => ({ ...current, ...lastTask.checks }));
+      }
+      setDeploymentTestTarget(undefined);
+    }
+    if (!taskPolling && lastTask?.action === 'CERT_INSTALL' && lastTask.state !== 'RUNNING') {
+      setCertificateUploading(false);
+      setCertificateUploadProgress(lastTask.state === 'SUCCESS' ? 100 : 0);
+      if (lastTask.state === 'SUCCESS') {
+        setCertificateFile(null);
+        setPrivateKeyFile(null);
+      }
+    }
+  }, [lastTask?.action, lastTask?.state, taskPolling]);
 
   const beginTaskPolling = useCallback((action: string) => {
     pollingBaseline.current = taskKey(useUpgradeStore.getState().status?.updater?.lastTask);
@@ -453,6 +522,32 @@ export default function UpgradeConfigPage() {
     setDismissedTaskId(undefined);
     setTaskPolling(true);
   }, []);
+
+  const validateHttpsActionFields = (values: DeploymentConfigSaveParams, requirePort: boolean): boolean => {
+    const publicDomain = values.httpsPublicDomain?.trim() || '';
+    const adminDomain = values.httpsAdminDomain?.trim() || '';
+    const domainError = !publicDomain || !adminDomain
+      ? '请先填写用户端和管理端 HTTPS 域名'
+      : !HOSTNAME_PATTERN.test(publicDomain) || !HOSTNAME_PATTERN.test(adminDomain)
+        ? 'HTTPS 域名格式不正确'
+        : publicDomain.toLowerCase() === adminDomain.toLowerCase()
+          ? '用户端域名与管理端域名不能相同'
+          : '';
+    const port = Number(values.httpsPort);
+    const portError = requirePort && (!Number.isInteger(port) || port < 1 || port > 65535)
+      ? 'HTTPS 端口范围必须为 1-65535'
+      : '';
+    deploymentForm.setFields([
+      { name: 'httpsPublicDomain', errors: domainError ? [domainError] : [] },
+      { name: 'httpsAdminDomain', errors: domainError ? [domainError] : [] },
+      { name: 'httpsPort', errors: portError ? [portError] : [] }
+    ]);
+    if (domainError || portError) {
+      message.warning(domainError || portError);
+      return false;
+    }
+    return true;
+  };
 
   const handleSaveSource = async () => {
     if (sourceLoadError || sourceLoading) return;
@@ -481,6 +576,77 @@ export default function UpgradeConfigPage() {
       beginTaskPolling('CONFIG_VALIDATE');
     } finally {
       setDeploymentSaving(false);
+    }
+  };
+
+  const handleTestDeployment = async (
+    target: 'config' | 'dns' | 'certificate' | 'https' | 'mysql' | 'redis' | 'rocketmq'
+  ) => {
+    const fieldsByTarget: Record<string, Array<keyof DeploymentConfigSaveParams>> = {
+      config: ['configPath', 'httpPort', 'adminPort', 'backendPort'],
+      dns: ['configPath', 'httpsPublicDomain', 'httpsAdminDomain'],
+      certificate: ['configPath', 'httpsPublicDomain', 'httpsAdminDomain', 'httpsCertPath', 'httpsKeyPath'],
+      https: ['configPath', 'httpsPort', 'httpsPublicDomain', 'httpsAdminDomain'],
+      mysql: ['configPath', 'dbHost', 'dbPort', 'dbName', 'dbUsername', 'dbPassword'],
+      redis: ['configPath', 'redisHost', 'redisPort', 'redisUsername', 'redisPassword', 'redisDatabase', 'clearRedisPassword'],
+      rocketmq: ['configPath', 'rocketmqEnabled', 'rocketmqNameserver', 'rocketmqAccessKey', 'rocketmqSecretKey', 'clearRocketmqCredentials']
+    };
+    await deploymentForm.validateFields(fieldsByTarget[target]);
+    const allValues = deploymentForm.getFieldsValue(true);
+    if (['dns', 'certificate', 'https'].includes(target)
+      && !validateHttpsActionFields(allValues, target === 'https')) return;
+    const values = target === 'config'
+      ? allValues
+      : fieldsByTarget[target].reduce<DeploymentConfigSaveParams>((result, field) => {
+          result[field] = allValues[field] as never;
+          return result;
+        }, {});
+    values.composeProfiles = allValues.composeProfiles;
+    values.httpsEnabled = allValues.httpsEnabled;
+    values.dataRoot = allValues.dataRoot;
+    if (target === 'mysql') {
+      values.mysqlRootPassword = allValues.mysqlRootPassword;
+      values.mysqlPort = allValues.mysqlPort;
+    }
+    setDeploymentTestTarget(target);
+    try {
+      const res: any = await testDeploymentConfig({ ...values, targets: [target] });
+      message.success(res?.msg || '配置诊断任务已受理');
+      beginTaskPolling('CONFIG_TEST');
+    } catch (error) {
+      setDeploymentTestTarget(undefined);
+      throw error;
+    }
+  };
+
+  const toggleDockerProfile = (profile: string, enabled: boolean) => {
+    const profiles = composeProfiles
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .filter((item) => item !== profile);
+    if (enabled) profiles.push(profile);
+    deploymentForm.setFieldValue('composeProfiles', profiles.join(','));
+    setDeploymentDirty(true);
+  };
+
+  const handleUploadCertificate = async () => {
+    if (!certificateFile || !privateKeyFile) {
+      message.warning('请同时选择完整证书链和私钥');
+      return;
+    }
+    const values = await deploymentForm.validateFields(['configPath', 'httpsPublicDomain', 'httpsAdminDomain']);
+    if (!validateHttpsActionFields(values, false)) return;
+    setCertificateUploading(true);
+    setCertificateUploadProgress(0);
+    try {
+      const res: any = await installHttpsCertificate(certificateFile, privateKeyFile, values, setCertificateUploadProgress);
+      message.success(res?.msg || '证书安装任务已受理');
+      beginTaskPolling('CERT_INSTALL');
+    } catch (error) {
+      setCertificateUploading(false);
+      setCertificateUploadProgress(0);
+      throw error;
     }
   };
 
@@ -1095,23 +1261,8 @@ export default function UpgradeConfigPage() {
           {deploymentDirty && <Tag color="gold">有未应用修改</Tag>}
         </Space>
         <Space wrap>
-          <Button icon={<ReloadOutlined />} loading={deploymentLoading} onClick={loadDeployment}>
+          <Button icon={<ReloadOutlined />} loading={deploymentLoading} onClick={() => { setDeploymentCheckResults({}); loadDeployment(); }}>
             重新加载
-          </Button>
-          <Button disabled={!deploymentConfig} loading={deploymentSaving} onClick={handleValidateDeployment}>
-            校验配置
-          </Button>
-          <Button danger disabled={!deploymentConfig} onClick={handleRollbackDeployment}>
-            恢复上次配置
-          </Button>
-          <Button
-            type="primary"
-            icon={<SaveOutlined />}
-            disabled={!deploymentConfig || !deploymentDirty}
-            loading={deploymentSaving}
-            onClick={handleApplyDeployment}
-          >
-            应用并重启
           </Button>
         </Space>
       </div>
@@ -1125,32 +1276,66 @@ export default function UpgradeConfigPage() {
         />
       )}
 
-      {deploymentConfig && (
+      {deploymentConfig && !configProtocolReady && (
         <Alert
-          type="info"
+          type="error"
           showIcon
-          message={`当前生效文件：${deploymentConfig.configPath}`}
-          description={`自定义文件只能放在 ${deploymentConfig.allowedConfigRoot}；密钥不会回显，输入框留空表示保持不变。`}
-          className="upgrade-page__modal-alert"
+          message={configProtocolIncompatible ? '当前升级器协议不兼容，请先升级' : '配置管理暂不可用'}
+          description={configProtocolIncompatible
+            ? '当前 aid-updater 不支持新版配置诊断与证书管理。为避免错误写入，测试、证书上传、保存及回滚操作已禁用。'
+            : '当前 aid-updater 未正常运行。请先完成修复，为避免错误写入，测试、证书上传、保存及回滚操作已禁用。'}
         />
+      )}
+
+      {deploymentConfig && (
+        <div className="upgrade-page__config-summary">
+          <div>
+            <span>配置真源</span>
+            <strong>{deploymentConfig.mode === 'docker' ? 'Docker 环境配置' : '手动部署配置'}</strong>
+            <Text ellipsis={{ tooltip: deploymentConfig.configPath }}>{deploymentConfig.configPath}</Text>
+          </div>
+          <div>
+            <span>HTTPS</span>
+            <strong>{httpsEnabled ? '已启用' : '未启用'}</strong>
+            <Text type="secondary">启用后仍保留 HTTP/IP 访问</Text>
+          </div>
+          <div>
+            <span>数据服务</span>
+            <strong>{deploymentConfig.mode === 'docker'
+              ? usesInternalMysql ? '内置 MySQL' : '外部 MySQL'
+              : usesLocalManualMysql ? '本机 MySQL' : '外部 MySQL'}</strong>
+            <Text type="secondary">密钥只写配置文件，不在页面回显</Text>
+          </div>
+          <div>
+            <span>消息队列</span>
+            <strong>{mqActive ? '已启用' : rocketmqEnabled ? '待启用组件' : '未启用'}</strong>
+            <Text type="secondary">未启用时不初始化 MQ</Text>
+          </div>
+        </div>
       )}
 
       <Spin spinning={deploymentLoading}>
         <Form
           form={deploymentForm}
           layout="vertical"
-          disabled={!deploymentConfig || deploymentLoading}
+          disabled={!deploymentConfig || deploymentLoading || !configProtocolReady}
           onValuesChange={() => setDeploymentDirty(true)}
         >
-          <Form.Item
-            name="configPath"
-            label="配置文件路径"
-            rules={[{ required: true, message: '请输入配置文件路径' }]}
-            extra={`默认：${deploymentConfig?.defaultConfigPath || '-'}；仅允许 .env/.conf，升级器会校验目录与软链接。`}
-          >
-            <Input />
-          </Form.Item>
-
+          <Collapse
+            className="upgrade-page__config-sections"
+            defaultActiveKey={['network']}
+            expandIconPosition="end"
+            items={[
+              {
+                key: 'network',
+                label: (
+                  <div className="upgrade-page__config-section-title">
+                    <CloudServerOutlined />
+                    <div><strong>基础网络</strong><span>访问端口与部署组件</span></div>
+                  </div>
+                ),
+                children: (
+                  <>
           <Row gutter={20}>
             <Col xs={24} md={8}>
               <Form.Item name="httpPort" label="用户端口" rules={[{ required: true }]}>
@@ -1169,14 +1354,16 @@ export default function UpgradeConfigPage() {
             </Col>
           </Row>
 
-          <Form.Item
-            name="dockerMirrors"
-            label="Docker 国内镜像候选"
-            extra="多个 Registry 前缀用英文逗号分隔。部署器会先测速排序，再按顺序实际拉取；某个来源失败会自动尝试下一个，并校验官方镜像摘要。可填写云厂商分配的专属加速域名，请勿填写账号、密码或查询参数。"
-            rules={[{ max: 1024, message: '镜像候选内容不能超过 1024 个字符' }]}
-          >
-            <Input placeholder="docker.m.daocloud.io,dockerproxy.net" />
-          </Form.Item>
+          {deploymentConfig?.mode === 'docker' && (
+            <Form.Item
+              name="dockerMirrors"
+              label="Docker 国内镜像候选"
+              extra="多个 Registry 前缀用英文逗号分隔。部署器测速排序后逐个尝试，不得填写账号、密码或查询参数。"
+              rules={[{ max: 1024, message: '镜像候选内容不能超过 1024 个字符' }]}
+            >
+              <Input placeholder="docker.m.daocloud.io,dockerproxy.net" />
+            </Form.Item>
+          )}
 
           <Row gutter={20}>
             <Col xs={24} md={12}>
@@ -1224,15 +1411,65 @@ export default function UpgradeConfigPage() {
               <Col xs={24} md={12}>
                 <Form.Item
                   name="composeProfiles"
-                  label="Docker 组件 Profiles"
-                  extra="可选 mysql、redis、mq、https。移除 mysql 即使用外部 MySQL，内置数据库容器不会启动。"
+                  hidden
                 >
-                  <Input placeholder="mysql,redis" />
+                  <Input />
                 </Form.Item>
+                <div className="upgrade-page__component-switches">
+                  <div><span><DatabaseOutlined /></span><div><Text strong>内置 MySQL 5.7</Text><Text type="secondary">关闭后使用下方外部数据库</Text></div><Switch checked={Boolean(usesInternalMysql)} onChange={(checked) => toggleDockerProfile('mysql', checked)} /></div>
+                  <div><span><DatabaseOutlined /></span><div><Text strong>内置 Redis</Text><Text type="secondary">关闭后填写外部 Redis 地址</Text></div><Switch checked={Boolean(usesInternalRedis)} onChange={(checked) => toggleDockerProfile('redis', checked)} /></div>
+                </div>
               </Col>
             )}
           </Row>
 
+                  <div className="upgrade-page__section-test">
+                    <div><Text strong>基础配置校验</Text><Text type="secondary">检查字段格式、Compose 与 Nginx 模板，不写入配置。</Text></div>
+                    <Button
+                      icon={<CheckCircleOutlined />}
+                      loading={deploymentTestTarget === 'config'}
+                      disabled={taskBusy || !configProtocolReady}
+                      onClick={() => handleTestDeployment('config')}
+                    >测试配置</Button>
+                    {deploymentChecks.config && (
+                      <Alert
+                        showIcon
+                        type={deploymentChecks.config.status === 'PASS' ? 'success' : deploymentChecks.config.status === 'SKIPPED' ? 'info' : 'error'}
+                        message={deploymentChecks.config.message}
+                        description={deploymentChecks.config.suggestion}
+                      />
+                    )}
+                  </div>
+                  </>
+                )
+              },
+              {
+                key: 'https',
+                label: (
+                  <div className="upgrade-page__config-section-title">
+                    <SafetyCertificateOutlined />
+                    <div><strong>域名与 HTTPS</strong><span>域名、证书、443 与连通性</span></div>
+                    <Tag color={httpsEnabled ? 'green' : 'default'}>{httpsEnabled ? '已启用' : '未启用'}</Tag>
+                  </div>
+                ),
+                children: (
+                  <>
+          <div className="upgrade-page__feature-switch">
+            <div>
+              <Text strong>启用 HTTPS 入口</Text>
+              <Text type="secondary">HTTPS 与现有 HTTP/IP 入口并存，不会自动关闭 80 或管理端口。</Text>
+            </div>
+            <Switch
+              checked={httpsEnabled}
+              onChange={(checked) => {
+                if (deploymentConfig?.mode === 'docker') toggleDockerProfile('https', checked);
+                else {
+                  deploymentForm.setFieldValue('httpsEnabled', String(checked));
+                  setDeploymentDirty(true);
+                }
+              }}
+            />
+          </div>
           <Alert
             type="info"
             showIcon
@@ -1245,42 +1482,136 @@ export default function UpgradeConfigPage() {
             className="upgrade-page__modal-alert"
           />
           {deploymentConfig?.mode === 'systemd' && (
-            <Form.Item name="httpsEnabled" label="启用 HTTPS">
-              <Radio.Group
-                options={[
-                  { label: '关闭', value: 'false' },
-                  { label: '启用', value: 'true' }
-                ]}
-              />
-            </Form.Item>
+            <Form.Item name="httpsEnabled" hidden><Input /></Form.Item>
           )}
           <Row gutter={20}>
             <Col xs={24} md={8}>
-              <Form.Item name="httpsPort" label="HTTPS端口">
+              <Form.Item name="httpsPort" label="HTTPS端口" rules={portRules(httpsEnabled)}>
                 <Input placeholder="443" />
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>
-              <Form.Item name="httpsPublicDomain" label="用户端HTTPS域名">
+              <Form.Item
+                name="httpsPublicDomain"
+                label="用户端HTTPS域名"
+                rules={[
+                  { required: httpsEnabled, message: '请输入用户端 HTTPS 域名' },
+                  { pattern: HOSTNAME_PATTERN, message: '请输入合法域名，不要包含协议或路径' },
+                  ({ getFieldValue }) => ({
+                    validator: (_: unknown, value?: string) => value && value.toLowerCase() === String(getFieldValue('httpsAdminDomain') || '').toLowerCase()
+                      ? Promise.reject(new Error('用户端域名与管理端域名不能相同'))
+                      : Promise.resolve()
+                  })
+                ]}
+              >
                 <Input placeholder="www.example.com" />
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>
-              <Form.Item name="httpsAdminDomain" label="管理端HTTPS域名">
+              <Form.Item
+                name="httpsAdminDomain"
+                label="管理端HTTPS域名"
+                dependencies={['httpsPublicDomain']}
+                rules={[
+                  { required: httpsEnabled, message: '请输入管理端 HTTPS 域名' },
+                  { pattern: HOSTNAME_PATTERN, message: '请输入合法域名，不要包含协议或路径' },
+                  ({ getFieldValue }) => ({
+                    validator: (_: unknown, value?: string) => value && value.toLowerCase() === String(getFieldValue('httpsPublicDomain') || '').toLowerCase()
+                      ? Promise.reject(new Error('管理端域名与用户端域名不能相同'))
+                      : Promise.resolve()
+                  })
+                ]}
+              >
                 <Input placeholder="admin.example.com" />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
-              <Form.Item name="httpsCertPath" label="完整证书路径" extra="必须位于 DATA_ROOT/config/ssl，禁止软链接。">
-                <Input />
+              <Form.Item name="httpsCertPath" label="完整证书路径" extra="由升级器固定安装到受控 ssl 目录，页面不可任意指定路径。">
+                <Input readOnly />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
-              <Form.Item name="httpsKeyPath" label="证书私钥路径" extra="必须位于 DATA_ROOT/config/ssl，禁止软链接。">
-                <Input />
+              <Form.Item name="httpsKeyPath" label="证书私钥路径" extra="私钥内容永不回显、永不写数据库或日志。">
+                <Input readOnly />
               </Form.Item>
             </Col>
           </Row>
+
+          <div className="upgrade-page__certificate-upload">
+            <div className="upgrade-page__certificate-upload-grid">
+              <Upload
+                accept=".pem"
+                maxCount={1}
+                fileList={certificateFile ? [certificateFile as any] : []}
+                showUploadList={{ showPreviewIcon: false, showDownloadIcon: false }}
+                beforeUpload={(file) => { setCertificateFile(file); return false; }}
+                onRemove={() => { setCertificateFile(null); return true; }}
+              >
+                <Button icon={<FileTextOutlined />}>选择 fullchain.pem</Button>
+              </Upload>
+              <Upload
+                accept=".pem"
+                maxCount={1}
+                fileList={privateKeyFile ? [privateKeyFile as any] : []}
+                showUploadList={{ showPreviewIcon: false, showDownloadIcon: false }}
+                beforeUpload={(file) => { setPrivateKeyFile(file); return false; }}
+                onRemove={() => { setPrivateKeyFile(null); return true; }}
+              >
+                <Button icon={<SafetyCertificateOutlined />}>选择 privkey.pem</Button>
+              </Upload>
+              <Button
+                type="primary"
+                icon={<UploadOutlined />}
+                disabled={!certificateFile || !privateKeyFile || taskBusy || !configProtocolReady}
+                loading={certificateUploading}
+                onClick={handleUploadCertificate}
+              >安全上传证书</Button>
+            </div>
+            {certificateUploading && <Progress percent={certificateUploadProgress} size="small" status="active" />}
+            <Text type="secondary">两份 PEM 必须成对上传。升级器会校验证书链、有效期、SAN 与公私钥匹配，并保留可恢复备份。</Text>
+            {lastTask?.action === 'CERT_INSTALL' && lastTask.state !== 'RUNNING' && (
+              <Alert
+                showIcon
+                type={lastTask.state === 'SUCCESS' ? 'success' : 'error'}
+                message={lastTask.state === 'SUCCESS' ? '证书已安全安装' : '证书安装失败'}
+                description={lastTask.message}
+              />
+            )}
+          </div>
+
+          <div className="upgrade-page__diagnostic-grid">
+            {([
+              ['dns', '测试 DNS', '检查两个域名是否已解析'],
+              ['certificate', '测试证书', '检查有效期、SAN 与公私钥'],
+              ['https', '测试 HTTPS', '从服务器本地入口完成 TLS 握手']
+            ] as const).map(([target, label, description]) => (
+              <div className="upgrade-page__diagnostic-card" key={target}>
+                <div><Text strong>{label}</Text><Text type="secondary">{description}</Text></div>
+                <Button size="small" loading={deploymentTestTarget === target} disabled={taskBusy || !configProtocolReady} onClick={() => handleTestDeployment(target)}>立即测试</Button>
+                {deploymentChecks[target] && (
+                  <Alert
+                    showIcon
+                    type={deploymentChecks[target].status === 'PASS' ? 'success' : deploymentChecks[target].status === 'SKIPPED' ? 'info' : 'error'}
+                    message={deploymentChecks[target].message}
+                    description={deploymentChecks[target].suggestion}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+                  </>
+                )
+              },
+              {
+                key: 'data',
+                label: (
+                  <div className="upgrade-page__config-section-title">
+                    <DatabaseOutlined />
+                    <div><strong>数据服务</strong><span>MySQL 与 Redis 连接配置</span></div>
+                  </div>
+                ),
+                children: (
+                  <>
 
           {deploymentConfig?.mode === 'docker' && (
             <Alert
@@ -1396,6 +1727,34 @@ export default function UpgradeConfigPage() {
             <Checkbox>清空当前 Redis 密码（仅用于外部 Redis 确认无密码认证时）</Checkbox>
           </Form.Item>
 
+          <div className="upgrade-page__diagnostic-grid upgrade-page__diagnostic-grid--two">
+            {([
+              ['mysql', '测试 MySQL', '检查 MySQL 5.7、网络与账号认证'],
+              ['redis', '测试 Redis', '检查网络、ACL/密码与 PING']
+            ] as const).map(([target, label, description]) => (
+              <div className="upgrade-page__diagnostic-card" key={target}>
+                <div><Text strong>{label}</Text><Text type="secondary">{description}</Text></div>
+                <Button size="small" loading={deploymentTestTarget === target} disabled={taskBusy || !configProtocolReady} onClick={() => handleTestDeployment(target)}>立即测试</Button>
+                {deploymentChecks[target] && (
+                  <Alert showIcon type={deploymentChecks[target].status === 'PASS' ? 'success' : 'error'} message={deploymentChecks[target].message} description={deploymentChecks[target].suggestion} />
+                )}
+              </div>
+            ))}
+          </div>
+                  </>
+                )
+              },
+              {
+                key: 'security',
+                label: (
+                  <div className="upgrade-page__config-section-title">
+                    <SettingOutlined />
+                    <div><strong>应用运行参数</strong><span>JWT 密钥与后端 JVM</span></div>
+                  </div>
+                ),
+                children: (
+                  <>
+
           <Row gutter={20}>
             <Col xs={24} md={12}>
               <Form.Item name="tokenSecret" label="JWT密钥" extra="留空保持当前密钥；更换后已有登录状态会失效。">
@@ -1416,13 +1775,39 @@ export default function UpgradeConfigPage() {
             </Col>
           </Row>
 
+                  </>
+                )
+              },
+              {
+                key: 'mq',
+                label: (
+                  <div className="upgrade-page__config-section-title">
+                    <RocketOutlined />
+                    <div><strong>消息队列</strong><span>默认关闭，启用后才初始化 RocketMQ</span></div>
+                    <Tag color={mqActive ? 'green' : rocketmqEnabled ? 'orange' : 'default'}>
+                      {mqActive ? '已启用' : rocketmqEnabled ? '组件未启用' : '未启用'}
+                    </Tag>
+                  </div>
+                ),
+                children: (
+                  <>
+
           <Row gutter={20}>
             <Col xs={24} md={8}>
-              <Form.Item name="rocketmqEnabled" label="启用RocketMQ">
-                <Radio.Group
+              <Form.Item name="rocketmqEnabled" hidden><Input /></Form.Item>
+              <Form.Item label="RocketMQ 运行模式">
+                <Select
+                  value={!rocketmqEnabled ? 'disabled' : usesInternalRocketmq ? 'internal' : 'external'}
+                  onChange={(value) => {
+                    const enabled = value !== 'disabled';
+                    deploymentForm.setFieldValue('rocketmqEnabled', String(enabled));
+                    if (deploymentConfig?.mode === 'docker') toggleDockerProfile('mq', value === 'internal');
+                    setDeploymentDirty(true);
+                  }}
                   options={[
-                    { label: '关闭', value: 'false' },
-                    { label: '启用', value: 'true' }
+                    { label: '关闭（默认）', value: 'disabled' },
+                    ...(deploymentConfig?.mode === 'docker' ? [{ label: '内置 RocketMQ', value: 'internal' }] : []),
+                    { label: '外部 RocketMQ', value: 'external' }
                   ]}
                 />
               </Form.Item>
@@ -1477,6 +1862,36 @@ export default function UpgradeConfigPage() {
             <Checkbox>清空当前 RocketMQ ACL 凭证（AccessKey 与 SecretKey 同时清空）</Checkbox>
           </Form.Item>
 
+          <div className="upgrade-page__section-test">
+            <div><Text strong>RocketMQ 连通性</Text><Text type="secondary">仅在显式启用后检测；关闭状态显示已跳过。</Text></div>
+            <Button loading={deploymentTestTarget === 'rocketmq'} disabled={taskBusy || !configProtocolReady} onClick={() => handleTestDeployment('rocketmq')}>立即测试</Button>
+            {deploymentChecks.rocketmq && (
+              <Alert showIcon type={deploymentChecks.rocketmq.status === 'PASS' ? 'success' : deploymentChecks.rocketmq.status === 'SKIPPED' ? 'info' : 'error'} message={deploymentChecks.rocketmq.message} description={deploymentChecks.rocketmq.suggestion} />
+            )}
+          </div>
+                  </>
+                )
+              },
+              {
+                key: 'advanced',
+                label: (
+                  <div className="upgrade-page__config-section-title">
+                    <SettingOutlined />
+                    <div><strong>高级配置</strong><span>配置真源、下载线路与容器资源调优</span></div>
+                  </div>
+                ),
+                children: (
+                  <>
+
+          <Form.Item
+            name="configPath"
+            label="配置文件路径"
+            rules={[{ required: true, message: '请输入配置文件路径' }]}
+            extra={`当前部署方式为 ${deploymentConfig?.mode === 'docker' ? 'Docker' : '手动部署'}。仅允许默认路径 ${deploymentConfig?.defaultConfigPath || '-'}，或 ${deploymentConfig?.allowedConfigRoot || '-'} 目录内的 .env/.conf 普通文件；服务端会拒绝软链接和越界路径。`}
+          >
+            <Input />
+          </Form.Item>
+
           {deploymentConfig?.mode === 'docker' && (
             <Collapse
               ghost
@@ -1529,6 +1944,29 @@ export default function UpgradeConfigPage() {
               ]}
             />
           )}
+                  </>
+                )
+              }
+            ]}
+          />
+
+          <div className="upgrade-page__config-actions">
+            <div>
+              <Text strong>{deploymentDirty ? '存在尚未应用的修改' : '当前表单与已加载配置一致'}</Text>
+              <Text type="secondary">测试不写配置；应用时先校验和备份，重启失败会自动恢复。</Text>
+            </div>
+            <Space wrap>
+              <Button disabled={!deploymentConfig || !configProtocolReady} loading={deploymentSaving} onClick={handleValidateDeployment}>校验全部配置</Button>
+              <Button danger disabled={!deploymentConfig || taskBusy || !configProtocolReady} onClick={handleRollbackDeployment}>恢复上次配置</Button>
+              <Button
+                type="primary"
+                icon={<SaveOutlined />}
+                disabled={!deploymentConfig || !deploymentDirty || taskBusy || !configProtocolReady}
+                loading={deploymentSaving}
+                onClick={handleApplyDeployment}
+              >保存并重启生效</Button>
+            </Space>
+          </div>
         </Form>
       </Spin>
     </div>
